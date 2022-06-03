@@ -1,1824 +1,1608 @@
+/*global navigator, Image, $*/
+//'use strict';
 (function(wHandle, wjQuery) {
-    /*global navigator, Image, $*/
-    var CONNECTION_URL = "127.0.0.1:443"; // Default Connection IP
-    var SKIN_URL = "./skins/"; // Skins Directory
-    wHandle.setServer = function(arg) {
-        if (arg != gameMode) {
-            CONNECTION_URL = arg;
-            gameMode = arg;
-            showConnecting();
+    if (navigator.appVersion.indexOf("MSIE") != -1) alert("You're using a pretty old browser, some parts of the site may not work properly!");
+    Date.now || (Date.now = function() {
+        return (+new Date()).getTime();
+    });
+    var DATE = Date.now();
+    Array.prototype.peek = function() {
+        return this[this.length - 1];
+    };
+    Array.prototype.remove = function(a) {
+        var i = this.indexOf(a);
+        if (i !== -1) this.splice(i, 1);
+        return i !== -1;
+    };
+    function bytesToColor(r, g, b) {
+        var r1 = ("00" + (~~r).toString(16)).slice(-2),
+            g1 = ("00" + (~~g).toString(16)).slice(-2),
+            b1 = ("00" + (~~b).toString(16)).slice(-2);
+        return `#${r1}${g1}${b1}`;
+    }
+    function colorToBytes(color) {
+        if (color.length === 4) return {
+            r: parseInt(color[1] + color[1], 16),
+            g: parseInt(color[2] + color[2], 16),
+            b: parseInt(color[3] + color[3], 16)
+        };
+        else if (color.length === 7) return {
+            r: parseInt(color[1] + color[2], 16),
+            g: parseInt(color[3] + color[4], 16),
+            b: parseInt(color[5] + color[6], 16)
+        };
+        throw new Error(`Invalid color ${color}!`);
+    }
+    function darkenColor(color) {
+        var c = colorToBytes(color);
+        return bytesToColor(c.r * .9, c.g * .9, c.b * .9);
+    }
+    function cleanupObject(object) {for (var i in object) delete object[i]}
+    var _buffer = new DataView(new ArrayBuffer(8));
+    function Writer(littleEndian) {
+        this._e = littleEndian;
+        this.reset();
+        return this;
+    }
+    Writer.prototype = {
+        writer: 1,
+        reset: function() {
+            this._b = [];
+            this._o = 0;
+        },
+        setUint8: function(a) {
+            if (a >= 0 && a < 256) this._b.push(a);
+            return this;
+        },
+        setInt8: function(a) {
+            if (a >= -128 && a < 128) this._b.push(a);
+            return this;
+        },
+        setUint16: function(a) {
+            _buffer.setUint16(0, a, this._e);
+            this._move(2);
+            return this;
+        },
+        setInt16: function(a) {
+            _buffer.setInt16(0, a, this._e);
+            this._move(2);
+            return this;
+        },
+        setUint32: function(a) {
+            _buffer.setUint32(0, a, this._e);
+            this._move(4);
+            return this;
+        },
+        setInt32: function(a) {
+            _buffer.setInt32(0, a, this._e);
+            this._move(4);
+            return this;
+        },
+        setFloat32: function(a) {
+            _buffer.setFloat32(0, a, this._e);
+            this._move(4);
+            return this;
+        },
+        setFloat64: function(a) {
+            _buffer.setFloat64(0, a, this._e);
+            this._move(8);
+            return this;
+        },
+        _move: function(b) {
+            for (var i = 0; i < b; i++) this._b.push(_buffer.getUint8(i));
+        },
+        setStringUTF8: function(s) {
+            var bytesStr = unescape(encodeURIComponent(s));
+            for (var i = 0, l = bytesStr.length; i < l; i++) this._b.push(bytesStr.charCodeAt(i));
+            this._b.push(0);
+            return this;
+        },
+        build: function() {
+            return new Uint8Array(this._b);
         }
     };
-    var touchable = 'createTouch' in document,
-        touches = [],
-        leftTouchID = -1,
-        leftTouchPos = {x: 0, y: 0},
-        leftTouchStartPos = {x: 0, y: 0},
-        leftVector = {x: 0, y: 0},
-        useHttps = "https:" == wHandle.location.protocol;
-    function gameLoop() {
-        connecting = 1;
-        document.getElementById("canvas").focus();
-        var isTyping = 0,
-            chattxt;
-        mainCanvas = nCanvas = document.getElementById("canvas");
-        ctx = mainCanvas.getContext("2d");
-        mainCanvas.onmousemove = function(event) {
-            rawMouseX = event.clientX;
-            rawMouseY = event.clientY;
-            mouseCoordChange();
-        };
-        if (touchable) {
-            mainCanvas.addEventListener('touchstart', onTouchStart, 0);
-            mainCanvas.addEventListener('touchmove', onTouchMove, 0);
-            mainCanvas.addEventListener('touchend', onTouchEnd, 0);
+    function Reader(view, offset, littleEndian) {
+        this._e = littleEndian;
+        if (view) this.repurpose(view, offset);
+    }
+    Reader.prototype = {
+        reader: 1,
+        repurpose: function(view, offset) {
+            this.view = view;
+            this._o = offset || 0;
+        },
+        getUint8: function() {
+            return this.view.getUint8(this._o++, this._e);
+        },
+        getInt8: function() {
+            return this.view.getInt8(this._o++, this._e);
+        },
+        getUint16: function() {
+            return this.view.getUint16((this._o += 2) - 2, this._e);
+        },
+        getInt16: function() {
+            return this.view.getInt16((this._o += 2) - 2, this._e);
+        },
+        getUint32: function() {
+            return this.view.getUint32((this._o += 4) - 4, this._e);
+        },
+        getInt32: function() {
+            return this.view.getInt32((this._o += 4) - 4, this._e);
+        },
+        getFloat32: function() {
+            return this.view.getFloat32((this._o += 4) - 4, this._e);
+        },
+        getFloat64: function() {
+            return this.view.getFloat64((this._o += 8) - 8, this._e);
+        },
+        getStringUTF8: function() {
+            var s = "", b;
+            while ((b = this.view.getUint8(this._o++)) !== 0) s += String.fromCharCode(b);
+            return decodeURIComponent(escape(s));
         }
-        mainCanvas.onmouseup = function() {};
-        if (/firefox/i.test(navigator.userAgent)) {
-            document.addEventListener("DOMMouseScroll", handleWheel, 0);
-        } else {
-            document.body.onmousewheel = handleWheel;
-        }
-        mainCanvas.onfocus = function() {
-            isTyping = 0;
+    };
+    var log = {
+            verbosity: 4,
+            error: function(a) {if (log.verbosity <= 0) return; console.error(a)},
+            warn: function(a) {if (log.verbosity <= 1) return; console.warn(a)},
+            info: function(a) {if (log.verbosity <= 2) return; console.info(a)},
+            debug: function(a) {if (log.verbosity <= 3) return; console.debug(a)}
+        },
+        WS_URL = null,
+        SKIN_URL = "./skins/",
+        USE_HTTPS = "https:" == wHandle.location.protocol,
+        CELL_POINTS_MIN = 5,
+        CELL_POINTS_MAX = 120,
+        VIRUS_POINTS = 100,
+        PI_2 = Math.PI * 2,
+        UINT8_254 = new Uint8Array([254, 6, 0, 0, 0]),
+        UINT8_255 = new Uint8Array([255, 1, 0, 0, 0]),
+        UINT8 = {
+            1: new Uint8Array([1]),
+            17: new Uint8Array([17]),
+            21: new Uint8Array([21]),
+            18: new Uint8Array([18]),
+            19: new Uint8Array([19]),
+            22: new Uint8Array([22]),
+            23: new Uint8Array([23]),
+            24: new Uint8Array([24]),
+            25: new Uint8Array([25]),
+            26: new Uint8Array([26]),
+            27: new Uint8Array([27]),
+            28: new Uint8Array([28]),
+            30: new Uint8Array([30]),
+            31: new Uint8Array([31]),
+            29: new Uint8Array([29]),
+            33: new Uint8Array([33]),
+            34: new Uint8Array([34]),
+            35: new Uint8Array([35]),
+            36: new Uint8Array([36]),
+            37: new Uint8Array([37]),
+            38: new Uint8Array([38]),
+            39: new Uint8Array([39]),
+            40: new Uint8Array([40]),
+            41: new Uint8Array([41]),
+            42: new Uint8Array([42]),
+            43: new Uint8Array([43]),
+            254: new Uint8Array([254])
+        },
+        cells = Object.create({
+            mine: [],
+            byId: {},
+            list: [],
+        }),
+        border = Object.create({
+            left: -2000,
+            right: 2000,
+            top: -2000,
+            bottom: 2000,
+            width: 4000,
+            height: 4000,
+            centerX: -1,
+            centerY: -1
+        }),
+        leaderboard = Object.create({
+            type: NaN,
+            items: null,
+            canvas: document.createElement("canvas"),
+            teams: ["#F33", "#3F3", "#33F"]
+        }),
+        chat = Object.create({
+            messages: [],
+            waitUntil: 0,
+            canvas: document.createElement("canvas"),
+            visible: 0,
+        }),
+        stats = Object.create({
+            framesPerSecond: 0,
+            latency: NaN,
+            supports: null,
+            info: null,
+            pingLoopId: NaN,
+            pingLoopStamp: null,
+            canvas: document.createElement("canvas"),
+            visible: 0,
+            score: NaN,
+            maxScore: 0
+        }),
+        ws = null,
+        WS_URL = null,
+        isConnected = 0,
+        disconnectDelay = 1000,
+        syncUpdStamp = Date.now(),
+        syncAppStamp = Date.now(),
+        mainCanvas = null,
+        mainCtx = null,
+        loadedSkins = {},
+        overlayShown = 0,
+        isTyping = 0,
+        chatBox = null,
+        mapCenterSet = 0,
+        camera = {
+            x: 0,
+            y: 0,
+            z: 1,
+            target: {
+                x: 0,
+                y: 0,
+                z: 1
+            },
+            viewMult
+        },
+        mouse = {
+            x: NaN,
+            y: NaN,
+            z: 1
+        },
+        cameraX = 0,
+        cameraY = 0,
+        cameraZ = 1,
+        cameraZInvd = 1,
+        targetX = 0,
+        targetY = 0,
+        targetZ = 1,
+        viewMult = 1,
+        mouseX = NaN,
+        mouseY = NaN,
+        mouseZ = 1,
+        settings = {
+            mobile: "createTouch" in document,
+            showMass: 0,
+            showNames: 1,
+            hideChat: 0,
+            showTextOutline: 1,
+            showColor: 1,
+            showSkins: 1,
+            showMinimap: 1,
+            darkTheme: 0,
+            hideGrid: 0,
+            cellBorders: 1,
+            infiniteZoom: 0,
+            transparency: 0,
+            mapBorders: 0,
+            sectors: 0,
+            showPos: 0,
+            hideFood: 0,
+            jellyPhysics: 0,
+            allowGETipSet: 0
+        },
+        pressed = {
+            space: 0,
+            w: 0,
+            e: 0,
+            r: 0,
+            t: 0,
+            p: 0,
+            q: 0,
+            o: 0,
+            m: 0,
+            i: 0,
+            y: 0,
+            u: 0,
+            k: 0,
+            l: 0,
+            h: 0,
+            z: 0,
+            x: 0,
+            s: 0,
+            c: 0,
+            g: 0,
+            j: 0,
+            b: 0,
+            v: 0,
+            n: 0,
+            esc: 0
         };
-        document.getElementById("chat_textbox").onblur = function() {
-            isTyping = 0;
-        };
-        document.getElementById("chat_textbox").onfocus = function() {
-            isTyping = 1;
-        };
-        var spacePressed = 0,
-            qPressed = 0,
-            ePressed = 0,
-            rPressed = 0,
-            tPressed = 0,
-            wPressed = 0,
-            pPressed = 0,
-            oPressed = 0,
-            mPressed = 0,
-            yPressed = 0,
-            uPressed = 0,
-            kPressed = 0,
-            iPressed = 0,
-            lPressed = 0,
-            hPressed = 0,
-            zPressed = 0,
-            xPressed = 0,
-            sPressed = 0,
-            cPressed = 0,
-            gPressed = 0,
-            jPressed = 0,
-            bPressed = 0,
-            vPressed = 0,
-            nPressed = 0;
-        wHandle.onkeydown = function(event) {
-            if (hasOverlay) return;
-            switch (event.keyCode) {
-                case 32: // SPACE key
-                    if (!spacePressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(17);
-                        spacePressed = 1;
-                    }
-                    break;
-                case 81: // Q key
-                    if (!qPressed && !isTyping && !hasOverlay) {
-                        sendUint8(18);
-                        qPressed = 1;
-                    }
-                    break;
-                case 87: // W key
-                    if (!wPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(21);
-                    }
-                    break;
-                case 69: // E key
-                    if (!ePressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(22);
-                    }
-                    break;
-                case 82: // R key
-                    if (!rPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(23);
-                    }
-                    break;
-                case 84: // T key
-                    if (!tPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(24);
-                        tPressed = 1;
-                    }
-                    break;
-                case 80: // P key
-                    if (!pPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(25);
-                        pPressed = 1;
-                    }
-                    break;
-                case 79: // O key
-                    if (!oPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(26);
-                        oPressed = 1;
-                    }
-                    break;
-                case 77: // M key
-                    if (!mPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(27);
-                        mPressed = 1;
-                    }
-                    break;
-                case 73: // I key
-                    if (!iPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(28);
-                        iPressed = 1;
-                    }
-                    break;
-                case 89: // Y key
-                    if (!yPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(30);
-                    }
-                    break;
-                case 85: // U key
-                    if (!uPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(31);
-                    }
-                    break;
-                case 75: // K key
-                    if (!kPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(29);
-                        kPressed = 1;
-                    }
-                    break;
-                case 76: // L key
-                    if (!lPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(33);
-                        lPressed = 1;
-                    }
-                    break;
-                case 72: // H key
-                    if (!hPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(34);
-                        hPressed = 1;
-                    }
-                    break;
-                case 90: // Z key
-                    if (!zPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(35);
-                    }
-                    break;
-                case 88: // X key
-                    if (!xPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(36);
-                        xPressed = 1;
-                    }
-                    break;
-                case 83: // S key
-                    if (!sPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(37);
-                    }
-                    break;
-                case 67: // C key
-                    if (!cPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(38);
-                        cPressed = 1;
-                    }
-                    break;
-                case 71: // J key
-                    if (!jPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(39);
-                    }
-                    break;
-                case 74: // G key
-                    if (!gPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(40);
-                    }
-                    break;
-                case 66: // B key
-                    if (!bPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(41);
-                        bPressed = 1;
-                    }
-                    break;
-                case 86: // V key
-                    if (!vPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(42);
-                        vPressed = 1;
-                    }
-                    break;
-                case 78: // N key
-                    if (!nPressed && !isTyping && !hasOverlay) {
-                        sendMouseMove();
-                        sendUint8(43);
-                    }
-                    break;
-                case 13: // ENTER key
-                    if (isTyping || hideChat) {
-                        isTyping = 0;
-                        document.getElementById("chat_textbox").blur();
-                        chattxt = document.getElementById("chat_textbox").value;
-                        if (chattxt.length > 0) sendChat(chattxt);
-                        document.getElementById("chat_textbox").value = "";
+    function wsCleanup() {
+        if (!ws) return;
+        log.debug("WS cleanup triggered!");
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        ws.close();
+        ws = null;
+    }
+    function wsInit(url) {
+        if (ws) log.debug("WS init on existing connection!"), wsCleanup();
+        wjQuery("#connecting").show();
+        ws = new WebSocket(`ws${USE_HTTPS ? "s" : ""}://${WS_URL = url}`);
+        ws.binaryType = "arraybuffer";
+        ws.onopen = wsOpen;
+        ws.onmessage = wsMessage;
+        ws.onerror = wsError;
+        ws.onclose = wsClose;
+    }
+    function wsOpen() {
+        isConnected = 1;
+        disconnectDelay = 1000;
+        wjQuery("#connecting").hide();
+        wsSend(UINT8_254);
+        wsSend(UINT8_255);
+        log.debug(`WS connected, using https: ${USE_HTTPS}`);
+        console.log("Socket open.");
+    }
+    function wsError(error) {
+        log.warn(error);
+        /*throw new Error*/console.log("Socket error.");
+    }
+    function wsClose(e) {
+        isConnected = 0;
+        log.debug(`WS disconnected ${e.code} '${e.reason}'`);
+        wsCleanup();
+        gameReset();
+        setTimeout(function() {
+            if (ws && ws.readyState === 1) return;
+            wsInit(WS_URL);
+        }, disconnectDelay *= 1.5);
+        console.log("Socket closed.");
+    }
+    function wsSend(data) {
+        if (!ws) return;
+        if (ws.readyState !== 1) return;
+        if (data.build) ws.send(data.build());
+        else ws.send(data);
+    }
+    function wsMessage(data) {
+        syncUpdStamp = Date.now();
+        var reader = new Reader(new DataView(data.data), 0, 1),
+            packetId = reader.getUint8();
+        switch (packetId) {
+            case 0x10: // Update nodes
+                var killer,
+                    killed,
+                    id,
+                    x,
+                    y,
+                    s,
+                    flags,
+                    cell,
+                    updColor,
+                    updName,
+                    updSkin,
+                    count,
+                    color,
+                    name,
+                    skin;
+                // Consume records
+                count = reader.getUint16();
+                for (var i = 0; i < count; i++) {
+                    killer = reader.getUint32();
+                    killed = reader.getUint32();
+                    if (!cells.byId.hasOwnProperty(killer) || !cells.byId.hasOwnProperty(killed)) continue;
+                    cells.byId[killed].destroy(killer);
+                }
+                // Update records
+                while (1) {
+                    id = reader.getUint32();
+                    if (id === 0) break;
+                    x = reader.getInt32();
+                    y = reader.getInt32();
+                    s = reader.getUint16();
+                    flags = reader.getUint8();
+                    updColor = !!(flags & 0x02);
+                    updName = !!(flags & 0x08);
+                    updSkin = !!(flags & 0x04);
+                    color = updColor ? bytesToColor(reader.getUint8(), reader.getUint8(), reader.getUint8()) : null;
+                    skin = updSkin ? reader.getStringUTF8() : null;
+                    name = updName ? reader.getStringUTF8() : null;
+                    if (cells.byId.hasOwnProperty(id)) {
+                        cell = cells.byId[id];
+                        cell.update(syncUpdStamp);
+                        cell.updated = syncUpdStamp;
+                        cell.ox = cell.x;
+                        cell.oy = cell.y;
+                        cell.os = cell.s;
+                        cell.nx = x;
+                        cell.ny = y;
+                        cell.ns = s;
+                        if (color) cell.setColor(color);
+                        if (skin) cell.setSkin(skin);
+                        if (name) cell.setName(name);
                     } else {
-                        if (!hasOverlay) {
-                            document.getElementById("chat_textbox").focus();
-                            isTyping = 1;
-                        }
+                        cell = new Cell(id, x, y, s, name, color, skin, flags);
+                        cells.byId[id] = cell;
+                        cells.list.push(cell);
                     }
+                }
+                // Disappear records
+                count = reader.getUint16();
+                for (i = 0; i < count; i++) {
+                    killed = reader.getUint32();
+                    if (cells.byId.hasOwnProperty(killed) && !cells.byId[killed].destroyed) cells.byId[killed].destroy(null);
+                }
+                break;
+            case 0x11: // Update position
+                targetX = reader.getFloat32();
+                targetY = reader.getFloat32();
+                targetZ = reader.getFloat32();
+                break;
+            case 0x12: // Clear all
+                for (var i in cells.byId) cells.byId[i].destroy(null);
+            case 0x14: // Clear my cells
+                cells.mine = [];
+                break;
+            case 0x15: // Draw line
+                log.warn("Got packet 0x15 (draw line) which is unsupported!");
+                break;
+            case 0x20: // New cell
+                cells.mine.push(reader.getUint32());
+                break;
+            case 0x30: // Draw just text on a leaderboard
+                leaderboard.items = [];
+                leaderboard.type = "text";
+                count = reader.getUint32();
+                for (i = 0; i < count; ++i) leaderboard.items.push(reader.getStringUTF8());
+                drawLeaderboard();
+                break;
+            case 0x31: // Draw FFA leaderboard
+                leaderboard.items = [];
+                leaderboard.type = "ffa";
+                count = reader.getUint32();
+                for (i = 0; i < count; ++i)
+                    leaderboard.items.push({
+                        me: !!reader.getUint32(),
+                        name: reader.getStringUTF8() || "An unnamed cell"
+                    });
+                drawLeaderboard();
+                break;
+            case 0x32: // Draw Teams leaderboard
+                leaderboard.items = [];
+                leaderboard.type = "pie";
+                count = reader.getUint32();
+                for (i = 0; i < count; ++i) leaderboard.items.push(reader.getFloat32());
+                drawLeaderboard();
+                break;
+            case 0x40: // Set the borders
+                border.left = reader.getFloat64();
+                border.top = reader.getFloat64();
+                border.right = reader.getFloat64();
+                border.bottom = reader.getFloat64();
+                border.width = border.right - border.left;
+                border.height = border.bottom - border.top;
+                border.centerX = (border.left + border.right) / 2;
+                border.centerY = (border.top + border.bottom) / 2;
+                if (data.data.byteLength === 33) break;
+                if (!mapCenterSet) {
+                    mapCenterSet = 1;
+                    cameraX = targetX = border.centerX;
+                    cameraY = targetY = border.centerY;
+                    cameraZ = targetZ = 1;
+                }
+                reader.getUint32(); // game type
+                if (!/MultiOgar/.test(reader.getStringUTF8()) || stats.pingLoopId) break;
+                stats.pingLoopId = setInterval(function() {
+                    wsSend(UINT8[254]);
+                    stats.pingLoopStamp = Date.now();
+                }, 2000);
+                break;
+            case 0x63: // chat message
+                flags = reader.getUint8();
+                color = bytesToColor(reader.getUint8(), reader.getUint8(), reader.getUint8());
+                name = reader.getStringUTF8().trim();
+                var reg = /\{([\w]+)\}/.exec(name);
+                if (reg) name = name.replace(reg[0], "").trim();
+                var message = reader.getStringUTF8(),
+                    server = !!(flags & 0x80),
+                    admin = !!(flags & 0x40),
+                    mod = !!(flags & 0x20);
+                if (server && name !== "SERVER") name = "[SERVER] " + name;
+                if (admin) name = "[ADMIN] " + name;
+                if (mod) name = "[MOD] " + name;
+                var wait = Math.max(3000, 1000 + message.length * 150);
+                chat.waitUntil = syncUpdStamp - chat.waitUntil > 1000 ? syncUpdStamp + wait : chat.waitUntil + wait;
+                chat.messages.push({
+                    server: server,
+                    admin: admin,
+                    mod: mod,
+                    color: color,
+                    name: name,
+                    message: message,
+                    time: syncUpdStamp
+                });
+                drawChat();
+                break;
+            case 0xFE: // server stat
+                stats.info = JSON.parse(reader.getStringUTF8());
+                stats.latency = syncUpdStamp - stats.pingLoopStamp;
+                drawStats();
+                break;
+            default: // invalid packet
+                wsCleanup();
+                break;
+        }
+    }
+    function sendMouseMove(x, y) {
+        var writer = new Writer(1);
+        writer.setUint8(0x10);
+        writer.setUint32(x);
+        writer.setUint32(y);
+        writer._b.push(0, 0, 0, 0);
+        wsSend(writer);
+    }
+    function sendPlay(name) {
+        log.debug("Play triggered");
+        var writer = new Writer(1);
+        writer.setUint8(0x00);
+        writer.setStringUTF8(name);
+        wsSend(writer);
+    }
+    function sendChat(text) {
+        var writer = new Writer();
+        writer.setUint8(0x63);
+        writer.setUint8(0);
+        writer.setStringUTF8(text);
+        wsSend(writer);
+    }
+    function gameReset() {
+        cleanupObject(cells);
+        cleanupObject(border);
+        cleanupObject(leaderboard);
+        cleanupObject(chat);
+        cleanupObject(stats);
+        chat.messages = [];
+        leaderboard.items = [];
+        cells.mine = [];
+        cells.byId = {};
+        cells.list = [];
+        cameraX = cameraY = targetX = targetY = 0;
+        cameraZ = targetZ = 1;
+        mapCenterSet = 0;
+    }
+    if (null !== wHandle.localStorage) wjQuery(window).load(function() {
+        wjQuery(".save").each(function() {
+            var id = wjQuery(this).data("box-id"),
+                value = wHandle.localStorage.getItem("checkbox-" + id);
+            if (value && value == "1" && 0 != id) {
+                wjQuery(this).prop("checked", "1");
+                wjQuery(this).trigger("change");
+            } else if (id == 0 && value != null) wjQuery(this).val(value);
+        });
+        wjQuery(".save").change(function() {
+            var id = wjQuery(this).data("box-id"),
+                value = (id == 0) ? wjQuery(this).val() : wjQuery(this).prop("checked");
+            wHandle.localStorage.setItem("checkbox-" + id, value);
+        });
+    });
+    function hideOverlay() {
+        overlayShown = 0;
+        wjQuery("#overlays").fadeOut(200);
+    }
+    function showOverlay() {
+        overlayShown = 1;
+        wjQuery("#overlays").fadeIn(300);
+    }
+    function toCamera(ctx) {
+        ctx.translate(mainCanvas.width / 2, mainCanvas.height / 2);
+        scaleForth(ctx);
+        ctx.translate(-cameraX, -cameraY);
+    }
+    function scaleForth(ctx) {
+        ctx.scale(cameraZ, cameraZ);
+    }
+    function scaleBack(ctx) {
+        ctx.scale(cameraZInvd, cameraZInvd);
+    }
+    function fromCamera(ctx) {
+        ctx.translate(cameraX, cameraY);
+        scaleBack(ctx);
+        ctx.translate(-mainCanvas.width / 2, -mainCanvas.height / 2);
+    }
+    function drawChat() {
+        if (!chat.messages.length && !settings.hideChat) return;
+        var canvas = chat.canvas,
+            ctx = canvas.getContext("2d"),
+            latestMessages = chat.messages.slice(-15),
+            lines = [];
+        for (var i = 0, len = latestMessages.length; i < len; i++) {
+            lines.push([
+                {text: latestMessages[i].name,
+                color: latestMessages[i].color},
+                {text: " " + latestMessages[i].message,
+                color: settings.darkTheme ? "#FFF" : "#000"}
+            ]);
+        }
+        var width = 0,
+            height = 20 * len + 2;
+        for (var i = 0; i < len; i++) {
+            var thisLineWidth = 0,
+                complexes = lines[i];
+            for (var j = 0; j < complexes.length; j++) {
+                ctx.font = "18px Ubuntu";
+                complexes[j].width = ctx.measureText(complexes[j].text).width;
+                thisLineWidth += complexes[j].width;
+            }
+            width = Math.max(thisLineWidth, width);
+        }
+        canvas.width = width;
+        canvas.height = height;
+        for (var i = 0; i < len; i++) {
+            width = 0;
+            complexes = lines[i];
+            for (var j = 0; j < complexes.length; j++) {
+                ctx.font = "18px Ubuntu";
+                ctx.fillStyle = complexes[j].color;
+                ctx.fillText(complexes[j].text, width, 20 * (1 + i));
+                width += complexes[j].width;
+            }
+        }
+    }
+    function drawStats() {
+        if (!stats.info) return stats.visible = 0;
+        stats.visible = 1;
+        var canvas = stats.canvas,
+            ctx = canvas.getContext("2d");
+        ctx.font = "14px Ubuntu";
+        if (typeof stats.info.botsTotal === 'undefined') stats.info.botsTotal = 0;
+        if (typeof stats.info.playersDead === 'undefined') stats.info.playersDead = 0;
+        var rows = [
+            `${stats.info.name} (${stats.info.mode})`,
+            `${stats.info.playersTotal} / ${stats.info.playersLimit} players`,
+            `${stats.info.playersAlive} playing`,
+            `${stats.info.playersDead} dead`,
+            `${stats.info.playersSpect} spectating`,
+            `${stats.info.botsTotal} bots`,
+            `${(stats.info.update * 2.5).toFixed(1)}% memory load`,
+            `${prettyPrintTime(stats.info.uptime)} uptime`
+        ];
+        var width = 0;
+        for (var i = 0; i < rows.length; i++) width = Math.max(width, 2 + ctx.measureText(rows[i]).width + 2);
+        canvas.width = width;
+        canvas.height = rows.length * (14 + 2);
+        ctx.font = "14px Ubuntu";
+        ctx.fillStyle = settings.darkTheme ? "#AAA" : "#555";
+        ctx.textBaseline = "top";
+        for (var i = 0; i < rows.length; i++) ctx.fillText(rows[i], 2, -2 + i * (14 + 2));
+    }
+    function prettyPrintTime(seconds) {
+        seconds = ~~seconds;
+        var minutes = ~~(seconds / 60);
+        if (minutes < 1) return "<1 min";
+        var hours = ~~(minutes / 60);
+        if (hours < 1) return minutes + " min";
+        var days = ~~(hours / 24);
+        if (days < 1) return hours + " hours";
+        return days + " days";
+    }
+    function drawLeaderboard() {
+        if (leaderboard.type === NaN) return leaderboard.visible = 0;
+        if (!settings.showNames || !leaderboard.items.length) return leaderboard.visible = 0;
+        leaderboard.visible = 1;
+        var canvas = leaderboard.canvas,
+            ctx = canvas.getContext("2d"),
+            len = leaderboard.items.length;
+        canvas.width = 250;
+        canvas.height = leaderboard.type !== "pie" ? 60 + 24 * len : 240;
+        ctx.globalAlpha = .4;
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, 250, canvas.height);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#FFF";
+        ctx.font = "30px Ubuntu";
+        ctx.fillText("Leaderboard", 125 - ctx.measureText("Leaderboard").width / 2, 40);
+        if (leaderboard.type === "pie") {
+            var last = 0;
+            for (var i = 0; i < len; i++) {
+                ctx.fillStyle = leaderboard.teams[i];
+                ctx.beginPath();
+                ctx.moveTo(125, 140);
+                ctx.arc(125, 140, 80, last, (last += leaderboard.items[i] * PI_2), 0);
+                ctx.closePath();
+                ctx.fill();
+            }
+        } else {
+            var text,
+                isMe = 0;
+            ctx.font = "20px Ubuntu";
+            for (var i = 0; i < len; i++) {
+                if (leaderboard.type === "text") text = leaderboard.items[i];
+                else text = leaderboard.items[i].name, isMe = leaderboard.items[i].me;
+                // replace {skin} with empty string
+                var reg = /\{([\w]+)\}/.exec(text);
+                if (reg) text = text.replace(reg[0], "").trim();
+                var string = String($("#lbColor").val());
+                ctx.fillStyle = isMe ? "#" + (!string ? "FAA" : string) : "#FFF";
+                if (leaderboard.type === "ffa") text = (i + 1) + ". " + (text || "An unnamed cell");
+                ctx.textAlign = "left";
+                ctx.fillText(text, 15, 70 + 24 * i);
+            }
+        }
+    }
+    function drawGrid() {
+        mainCtx.save();
+        mainCtx.lineWidth = 1;
+        mainCtx.strokeStyle = settings.darkTheme ? "#AAA" : "#000";
+        mainCtx.globalAlpha = .2;
+        var step = 50, i,
+            cW = mainCanvas.width / cameraZ,
+            cH = mainCanvas.height / cameraZ,
+            startLeft = (-cameraX + cW / 2) % step,
+            startTop = (-cameraY + cH / 2) % step;
+        scaleForth(mainCtx);
+        mainCtx.beginPath();
+        for (i = startLeft; i < cW; i += step) {
+            mainCtx.moveTo(i, 0);
+            mainCtx.lineTo(i, cH);
+        }
+        for (i = startTop; i < cH; i += step) {
+            mainCtx.moveTo(0, i);
+            mainCtx.lineTo(cW, i);
+        }
+        mainCtx.closePath();
+        mainCtx.stroke();
+        mainCtx.restore();
+    }
+    function drawBorders() { // Rendered unusable when a server has coordinate scrambling enabled
+        if (!isConnected || border.centerX !== 0 || border.centerY !== 0 || !settings.mapBorders) return;
+        mainCtx.save();
+        mainCtx.strokeStyle = '#F00';
+        mainCtx.lineWidth = 20;
+        mainCtx.lineCap = "round";
+        mainCtx.lineJoin = "round";
+        mainCtx.beginPath();
+        mainCtx.moveTo(border.left, border.top);
+        mainCtx.lineTo(border.right, border.top);
+        mainCtx.lineTo(border.right, border.bottom);
+        mainCtx.lineTo(border.left, border.bottom);
+        mainCtx.closePath();
+        mainCtx.stroke();
+        mainCtx.restore();
+    }
+    function drawSectors() { // Rendered unusable when a server has coordinate scrambling enabled
+        if (!isConnected || border.centerX !== 0 || border.centerY !== 0 || !settings.sectors) return;
+        var x = border.left + 65,
+            y = border.bottom - 65,
+            letter = "ABCDE".split(""),
+            w = (border.right - 65 - x) / 5,
+            h = (border.top + 65 - y) / 5;
+        mainCtx.save();
+        mainCtx.beginPath();
+        mainCtx.lineWidth = .05;
+        mainCtx.textAlign = "center";
+        mainCtx.textBaseline = "middle";
+        mainCtx.font = w * .6 + "px Russo One";
+        mainCtx.fillStyle = "#1A1A1A";
+        for (var j = 0; 5 > j; j++)
+            for (var i = 0; 5 > i; i++) mainCtx.fillText(letter[j] + (i + 1), x + w * j + w / 2, (-y - h) + h * -i + h / 2);
+        mainCtx.lineWidth = 100;
+        mainCtx.strokeStyle = "#1A1A1A";
+        for (j = 0; 5 > j; j++)
+            for (i = 0; 5 > i; i++) mainCtx.strokeRect(x + w * i, y + h * j, w, h);
+        mainCtx.restore();
+        mainCtx.stroke();
+    }
+    function drawMinimap() { // Rendered unusable when a server has coordinate scrambling enabled
+        if (!isConnected || border.centerX !== 0 ||
+            border.centerY !== 0 || !settings.showMinimap) return;
+        mainCtx.save();
+        var width = 200 * (border.width / border.height),
+            height = 200 * (border.height / border.width),
+            beginX = mainCanvas.width / viewMult - width,
+            beginY = mainCanvas.height / viewMult - height;
+        mainCtx.fillStyle = "#000";
+        mainCtx.globalAlpha = .4;
+        mainCtx.fillRect(beginX, beginY, width, height);
+        mainCtx.globalAlpha = 1;
+        var sectorNames = ["ABCDE", "12345"],
+            sectorWidth = width / 5,
+            sectorHeight = height / 5,
+            sectorNameSize = Math.min(sectorWidth, sectorHeight) / 3;
+        mainCtx.fillStyle = settings.darkTheme ? "#666" : "#DDD";
+        mainCtx.textBaseline = "middle";
+        mainCtx.textAlign = "center";
+        mainCtx.font = `${sectorNameSize}px Russo One`;
+        for (var i = 0; i < 5; i++) {
+            var x = sectorWidth / 2 + i * sectorWidth;
+            for (var j = 0; j < 5; j++) {
+                var y = sectorHeight / 2 + j * sectorHeight;
+                mainCtx.fillText(`${sectorNames[0][i]}${sectorNames[1][j]}`, beginX + x, beginY + y);
+            }
+        }
+        var scaleX = width / border.width,
+            scaleY = height / border.height,
+            halfWidth = border.width / 2,
+            halfHeight = border.height / 2,
+            posX = beginX + (cameraX + halfWidth) * scaleX,
+            posY = beginY + (cameraY + halfHeight) * scaleY;
+        mainCtx.beginPath();
+        if (cells.mine.length) {
+            for (var i = 0; i < cells.mine.length; i++) {
+                var cell = cells.byId[cells.mine[i]];
+                if (cell) {
+                    mainCtx.fillStyle = settings.showColor ? cell.color : '#FFF';
+                    x = beginX + (cell.x + halfWidth) * scaleX;
+                    y = beginY + (cell.y + halfHeight) * scaleY;
+                    mainCtx.moveTo(x + cell.s * scaleX, y);
+                    mainCtx.arc(x, y, cell.s * scaleX, 0, PI_2);
+                }
+            }
+        } else {
+            mainCtx.fillStyle = "#FFF";
+            mainCtx.arc(posX, posY, 5, 0, PI_2);
+        }
+        mainCtx.fill();
+        cell = null;
+        for (var i = 0, l = cells.mine.length; i < l; i++) {
+            if (cells.byId.hasOwnProperty(cells.mine[i])) {
+                cell = cells.byId[cells.mine[i]];
+                break;
+            }
+        }
+        if (cell !== null) {
+            mainCtx.fillStyle = settings.darkTheme ? "#DDD" : "#222";
+            mainCtx.font = `${sectorNameSize}px Ubuntu`;
+            mainCtx.fillText(cell.name, posX, posY - 7 - sectorNameSize / 2);
+        }
+        mainCtx.restore();
+    }
+    function drawGame() {
+        stats.framesPerSecond += (1000 / Math.max(Date.now() - syncAppStamp, 1) - stats.framesPerSecond) / 10;
+        syncAppStamp = Date.now();
+        var drawList = cells.list.slice(0).sort(cellSort);
+        for (var i = 0; i < drawList.length; i++) drawList[i].update(syncAppStamp);
+        cameraUpdate();
+        if (settings.jellyPhysics)
+            for (var i = 0; i < drawList.length; i++) {
+                var cell = drawList[i];
+                cell.updateNumPoints();
+                cell.movePoints();
+            }
+        mainCtx.save();
+        mainCtx.fillStyle = settings.darkTheme ? "#111" : "#F2FBFF";
+        mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+        if (!settings.hideGrid) drawGrid();
+        toCamera(mainCtx);
+        drawBorders();
+        drawSectors();
+        for (var i = 0; i < drawList.length; i++) drawList[i].draw(mainCtx);
+        fromCamera(mainCtx);
+        mainCtx.scale(viewMult, viewMult);
+        var height = 2;
+        mainCtx.fillStyle = settings.darkTheme ? "#FFF" : "#000";
+        mainCtx.textBaseline = "top";
+        if (!isNaN(stats.score)) {
+            mainCtx.font = "30px Ubuntu";
+            if (!settings.showPos || !isConnected) var pos = "";
+            else pos = `| Position: (${~~cameraX}, ${~~cameraY})`;
+            mainCtx.fillText(`Score: ${stats.score} ${pos}`, 2, height);
+            height += 30;
+        } else {
+            mainCtx.font = "30px Ubuntu";
+            if (!settings.showPos || !isConnected) pos = "";
+            else {
+                pos = `Position: (${~~cameraX}, ${~~cameraY})`;
+                mainCtx.fillText(`${pos}`, 2, height);
+                height += 30;
+            }
+        }
+        mainCtx.font = "20px Ubuntu";
+        var gameStatsText = `${~~stats.framesPerSecond} FPS`;
+        if (!isNaN(stats.latency)) gameStatsText += ` | ${stats.latency}ms ping`;
+        mainCtx.fillText(gameStatsText, 2, height);
+        height += 24;
+        if (stats.visible) mainCtx.drawImage(stats.canvas, 2, height);
+        if (leaderboard.visible) mainCtx.drawImage(leaderboard.canvas, mainCanvas.width / viewMult - 10 - leaderboard.canvas.width, 10);
+        if (!settings.hideChat && (isTyping || 1)) {
+            mainCtx.globalAlpha = isTyping ? 1 : Math.max(1000 - syncAppStamp + chat.waitUntil, 0) / 1000;
+            mainCtx.drawImage(chat.canvas, 10 / viewMult, (mainCanvas.height - 55) / viewMult - chat.canvas.height);
+            mainCtx.globalAlpha = 1;
+        }
+        drawMinimap();
+        mainCtx.restore();
+        cacheCleanup();
+        wHandle.requestAnimationFrame(drawGame);
+    }
+    function cellSort(a, b) {
+        return a.s === b.s ? a.id - b.id : a.s - b.s;
+    }
+    function cameraUpdate() {
+        var myCells = [];
+        for (var i = 0; i < cells.mine.length; i++)
+            if (cells.byId.hasOwnProperty(cells.mine[i])) myCells.push(cells.byId[cells.mine[i]]);
+        if (myCells.length > 0) {
+            var x = 0,
+                y = 0,
+                s = 0,
+                score = 0,
+                len = myCells.length;
+            for (var i = 0; i < len; i++) {
+                var cell = myCells[i];
+                score += ~~(cell.ns * cell.ns / 100);
+                x += cell.x;
+                y += cell.y;
+                s += cell.s;
+            }
+            targetX = x / len;
+            targetY = y / len;
+            targetZ = Math.pow(Math.min(64 / s, 1), .4);
+            cameraX = (targetX + cameraX) / 2;
+            cameraY = (targetY + cameraY) / 2;
+            stats.score = score;
+            stats.maxScore = Math.max(stats.maxScore, score);
+        } else {
+            stats.score = NaN;
+            stats.maxScore = 0;
+            cameraX += (targetX - cameraX) / 20;
+            cameraY += (targetY - cameraY) / 20;
+        }
+        cameraZ += (targetZ * viewMult * mouseZ - cameraZ) / 9;
+        cameraZInvd = 1 / cameraZ;
+    }
+    function Cell(id, x, y, s, name, color, skin, flags) {
+        this.id = id;
+        this.x = this.nx = this.ox = x;
+        this.y = this.ny = this.oy = y;
+        this.s = this.ns = this.os = s;
+        this.setColor(color);
+        this.setName(name);
+        this.setSkin(skin);
+        this.jagged = flags & 0x01 || flags & 0x10;
+        this.ejected = !!(flags & 0x20);
+        this.food = !!(flags & 0x80); // For my server
+        this.born = syncUpdStamp;
+        this.points = [];
+        this.pointsVel = [];
+    }
+    Cell.prototype = {
+        destroyed: 0,
+        id: 0,
+        diedBy: 0,
+        ox: 0,
+        x: 0,
+        nx: 0,
+        oy: 0,
+        y: 0,
+        ny: 0,
+        os: 0,
+        s: 0,
+        ns: 0,
+        nameSize: 0,
+        drawNameSize: 0,
+        color: "#FFF",
+        sColor: "#E5E5E5",
+        skin: null,
+        jagged: 0,
+        born: null,
+        updated: null,
+        dead: null, // timestamps
+        destroy: function(killerId) {
+            delete cells.byId[this.id];
+            if (cells.mine.remove(this.id) && !cells.mine.length) showOverlay();
+            this.destroyed = 1;
+            this.dead = syncUpdStamp;
+            if (killerId && !this.diedBy) this.diedBy = killerId;
+        },
+        update: function(relativeTime) {
+            var dt = (relativeTime - this.updated) / 120,
+                prevFrameSize = this.s;
+            dt = Math.max(Math.min(dt, 1), 0);
+            if (this.destroyed && Date.now() > this.dead + 200) cells.list.remove(this);
+            else if (this.diedBy && cells.byId.hasOwnProperty(this.diedBy)) {
+                this.nx = cells.byId[this.diedBy].x;
+                this.ny = cells.byId[this.diedBy].y;
+            }
+            this.x = this.ox + (this.nx - this.ox) * dt;
+            this.y = this.oy + (this.ny - this.oy) * dt;
+            this.s = this.os + (this.ns - this.os) * dt;
+            this.nameSize = ~~(~~(Math.max(~~(.3 * this.ns), 24)) / 3) * 3;
+            this.drawNameSize = ~~(~~(Math.max(~~(.3 * this.s), 24)) / 3) * 3;
+            if (settings.jellyPhysics && this.points.length) {
+                var ratio = this.s / prevFrameSize;
+                if (this.ns != this.os && ratio != 1)
+                    for (var i = 0; i < this.points.length; i++) this.points[i].rl *= ratio;
+            }
+        },
+        updateNumPoints: function() {
+            var numPoints = Math.min(Math.max(this.s * cameraZ | 0, CELL_POINTS_MIN), CELL_POINTS_MAX);
+            if (this.jagged) numPoints = VIRUS_POINTS;
+            while (this.points.length > numPoints) {
+                var i = Math.random() * this.points.length | 0;
+                this.points.splice(i, 1);
+                this.pointsVel.splice(i, 1);
+            }
+            if (this.points.length === 0 && numPoints !== 0) {
+                this.points.push({
+                    x: this.x,
+                    y: this.y,
+                    rl: this.s,
+                    parent: this,
+                });
+                this.pointsVel.push(Math.random() - .5);
+            }
+            while (this.points.length < numPoints) {
+                var i = Math.random() * this.points.length | 0,
+                    point = this.points[i],
+                    vel = this.pointsVel[i];
+                this.points.splice(i, 0, {
+                    x: point.x,
+                    y: point.y,
+                    rl: point.rl,
+                    parent: this
+                });
+                this.pointsVel.splice(i, 0, vel);
+            }
+        },
+        movePoints: function() {
+            var pointsVel = this.pointsVel.slice();
+            for (var i = 0; i < this.points.length; ++i) {
+                var prevVel = pointsVel[(i - 1 + this.points.length) % this.points.length],
+                    nextVel = pointsVel[(i + 1) % this.points.length],
+                    newVel = Math.max(Math.min((this.pointsVel[i] + Math.random() - .5) * .7, 10), -10);
+                this.pointsVel[i] = (prevVel + nextVel + 8 * newVel) / 10;
+            }
+            for (var i = 0; i < this.points.length; ++i) {
+                var curP = this.points[i],
+                    prevRl = this.points[(i - 1 + this.points.length) % this.points.length].rl,
+                    nextRl = this.points[(i + 1) % this.points.length].rl,
+                    curRl = curP.rl,
+                    affected = false;
+                if (!affected && (curP.x < border.left || curP.y < border.top || curP.x > border.right || curP.y > border.bottom)) affected = true;
+                if (affected) this.pointsVel[i] = Math.min(this.pointsVel[i], 0) - 1;
+                curRl += this.pointsVel[i];
+                curRl = Math.max(curRl, 0);
+                curRl = (9 * curRl + this.s) / 10;
+                curP.rl = (prevRl + nextRl + 8 * curRl) / 10;
+                var angle = 2 * Math.PI * i / this.points.length,
+                    rl = curP.rl;
+                if (this.jagged && i % 2 === 0) rl += 5;
+                curP.x = this.x + Math.cos(angle) * rl;
+                curP.y = this.y + Math.sin(angle) * rl;
+            }
+        },
+        setName: function(value) {
+            var nameSkin = /\{([\w\W]+)\}/.exec(value);
+            if (this.skin == null && nameSkin != null) {
+                this.name = value.replace(nameSkin[0], "").trim();
+                this.setSkin(nameSkin[1]);
+            } else this.name = value;
+        },
+        setSkin: function(value) {
+            this.skin = (value && value[0] === "%" ? value.slice(1) : value) || this.skin;
+            if (this.skin == null || loadedSkins[this.skin]) return;
+            loadedSkins[this.skin] = new Image();
+            loadedSkins[this.skin].src = `${SKIN_URL}${this.skin}.png`;
+        },
+        setColor: function(value) {
+            if (!value) return log.warn("Returned no color!");
+            this.color = value;
+            this.sColor = darkenColor(value);
+        },
+        draw: function(ctx) {
+            ctx.save();
+            this.drawShape(ctx);
+            this.drawText(ctx);
+            ctx.restore();
+        },
+        drawShape: function(ctx) {
+            if (settings.hideFood && this.food) return;
+            ctx.fillStyle = settings.showColor ? this.color : Cell.prototype.color;
+            var color = String($("#cellBorderColor").val());
+            ctx.strokeStyle = color.length === 3 || color.length === 6 ? "#" + color : settings.showColor ? this.sColor : Cell.prototype.sColor;
+            var size = String($("#cellBorderSize").val());
+            ctx.lineWidth = this.jagged ? 12 : (!size || size > 50 ? Math.max(~~(this.s / 50), 10) : size);
+            var showCellBorder = settings.cellBorders && !this.food && !this.ejected && 20 < this.s;
+            if (showCellBorder) this.s -= ctx.lineWidth / 2 - 2;
+            ctx.beginPath();
+            if (settings.jellyPhysics && this.points.length) {
+                ctx.lineJoin = "miter";
+                var point = this.points[0];
+                ctx.moveTo(point.x, point.y);
+                for (var i = 0; i < this.points.length; i++) ctx.lineTo(this.points[i].x, this.points[i].y);
+            } else if (this.jagged) {
+                var points = this.s,
+                    increment = PI_2 / points;
+                ctx.moveTo(this.x, this.y + this.s + 3);
+                for (var i = 1; i < points; i++) {
+                    var angle = i * increment,
+                        dist = this.s - 3 + (i % 2 === 0) * 6;
+                    ctx.lineTo(this.x + dist * Math.sin(angle), this.y + dist * Math.cos(angle));
+                }
+                ctx.lineTo(this.x, this.y + this.s + 3);
+            } else ctx.arc(this.x, this.y, this.s, 0, PI_2, false);
+            ctx.closePath();
+            if (settings.transparency) ctx.globalAlpha = .75;
+            else if (this.destroyed) ctx.globalAlpha = Math.max(200 - Date.now() + this.dead, 0) / 100;
+            else ctx.globalAlpha = Math.min(Date.now() - this.born, 200) / 100;
+            if (showCellBorder) ctx.stroke();
+            ctx.fill();
+            if (settings.showSkins && this.skin) {
+                var skin = loadedSkins[this.skin];
+                if (skin && skin.complete && skin.width && skin.height) {
+                    ctx.save();
+                    ctx.clip();
+                    scaleBack(ctx);
+                    var sScaled = this.s * cameraZ;
+                    if (settings.jellyPhysics) sScaled += 2;
+                    ctx.drawImage(skin, this.x * cameraZ - sScaled, this.y * cameraZ - sScaled, sScaled *= 2, sScaled);
+                    scaleForth(ctx);
+                    ctx.restore();
+                }
+            }
+            if (showCellBorder) this.s += ctx.lineWidth / 2 - 2;
+        },
+        drawText: function(ctx) {
+            if (this.s < 20 || this.jagged) return;
+            if (settings.showMass && (cells.mine.indexOf(this.id) !== -1 || !cells.mine.length) && !this.food/* && !this.ejected*/) {
+                var mass = (~~(this.s * this.s / 100)).toString();
+                if (this.name && settings.showNames) {
+                    drawText(ctx, 0, this.x, this.y, this.nameSize, this.drawNameSize, this.name);
+                    var y = this.y + Math.max(this.s / 4.5, this.nameSize / 1.5);
+                    drawText(ctx, 1, this.x, y, this.nameSize / 2, this.drawNameSize / 2, mass);
+                } else drawText(ctx, 1, this.x, this.y, this.nameSize / 2, this.drawNameSize / 2, mass);
+            } else if (this.name && settings.showNames) drawText(ctx, 0, this.x, this.y, this.nameSize, this.drawNameSize, this.name);
+        }
+    };
+    function cacheCleanup() {
+        for (var i in cachedNames) {
+            for (var j in cachedNames[i])
+                if (syncAppStamp - cachedNames[i][j].accessTime >= 5000) delete cachedNames[i][j];
+            if (cachedNames[i] === {}) delete cachedNames[i];
+        }
+        for (var i in cachedMass)
+            if (syncAppStamp - cachedMass[i].accessTime >= 5000) delete cachedMass[i];
+    }
+    // 2-var draw-stay cache
+    var cachedNames = {};
+    var cachedMass  = {};
+    function drawTextOnto(canvas, ctx, text, size) {
+        ctx.font = `${size}px Ubuntu`;
+        ctx.lineWidth = settings.showTextOutline ? Math.max(~~(size / 10), 2) : 2;
+        canvas.width = ctx.measureText(text).width + 2 * ctx.lineWidth;
+        canvas.height = 4 * size;
+        ctx.font = `${size}px Ubuntu`;
+        ctx.lineWidth = settings.showTextOutline ? Math.max(~~(size / 10), 2) : 2;
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "center";
+        var string = String($("#nameColor").val());
+        ctx.fillStyle = "#" + (!string ? "FFF" : string);
+        ctx.strokeStyle = "#000";
+        ctx.translate(canvas.width / 2, 2 * size);
+        (ctx.lineWidth !== 1) && ctx.strokeText(text, 0, 0);
+        ctx.fillText(text, 0, 0);
+    }
+    function drawRaw(ctx, x, y, text, size) {
+        ctx.font = `${size}px Ubuntu`;
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "center";
+        ctx.lineWidth = settings.showTextOutline ? Math.max(~~(size / 10), 2) : 2;
+        ctx.fillStyle = "#FFF";
+        ctx.strokeStyle = "#000";
+        (ctx.lineWidth !== 1) && ctx.strokeText(text, x, y);
+        ctx.fillText(text, x, y);
+        ctx.restore();
+    }
+    function newNameCache(value, size) {
+        var canvas = document.createElement("canvas");
+        var ctx = canvas.getContext("2d");
+        drawTextOnto(canvas, ctx, value, size);
+        cachedNames[value] = cachedNames[value] || {};
+        cachedNames[value][size] = {
+            width: canvas.width,
+            height: canvas.height,
+            canvas: canvas,
+            value: value,
+            size: size,
+            accessTime: syncAppStamp
+        };
+        return cachedNames[value][size];
+    }
+    function newMassCache(size) {
+        var canvases = {
+            "0": {}, "1": {}, "2": {}, "3": {}, "4": {},
+            "5": {}, "6": {}, "7": {}, "8": {}, "9": {}
+        };
+        for (var value in canvases) {
+            var canvas = canvases[value].canvas = document.createElement("canvas");
+            var ctx = canvas.getContext("2d");
+            drawTextOnto(canvas, ctx, value, size);
+            canvases[value].canvas = canvas;
+            canvases[value].width = canvas.width;
+            canvases[value].height = canvas.height;
+        }
+        cachedMass[size] = {
+            canvases: canvases,
+            size: size,
+            lineWidth: settings.showTextOutline ? Math.max(~~(size / 10), 2) : 2,
+            accessTime: syncAppStamp
+        };
+        return cachedMass[size];
+    }
+    function toleranceTest(a, b, tolerance) {
+        return (a - tolerance) <= b && b <= (a + tolerance);
+    }
+    function getNameCache(value, size) {
+        if (!cachedNames[value]) return newNameCache(value, size);
+        var sizes = Object.keys(cachedNames[value]);
+        for (var i = 0, l = sizes.length; i < l; i++)
+            if (toleranceTest(size, sizes[i], size / 4)) return cachedNames[value][sizes[i]];
+        return newNameCache(value, size);
+    }
+    function getMassCache(size) {
+        var sizes = Object.keys(cachedMass);
+        for (var i = 0, l = sizes.length; i < l; i++)
+            if (toleranceTest(size, sizes[i], size / 4)) return cachedMass[sizes[i]];
+        return newMassCache(size);
+    }
+    function drawText(ctx, isMass, x, y, size, drawSize, value) {
+        ctx.save();
+        if (size > 500) return drawRaw(ctx, x, y, value, drawSize);
+        ctx.imageSmoothingQuality = "high";
+        if (isMass) {
+            var cache = getMassCache(size);
+            cache.accessTime = syncAppStamp;
+            var canvases = cache.canvases;
+            var correctionScale = drawSize / cache.size;
+            // calculate width
+            var width = 0;
+            for (var i = 0; i < value.length; i++) width += canvases[value[i]].width - 2 * cache.lineWidth;
+            ctx.scale(correctionScale, correctionScale);
+            x /= correctionScale;
+            y /= correctionScale;
+            x -= width / 2;
+            for (var i = 0; i < value.length; i++) {
+                var item = canvases[value[i]];
+                ctx.drawImage(item.canvas, x, y - item.height / 2);
+                x += item.width - 2 * cache.lineWidth;
+            }
+        } else {
+            cache = getNameCache(value, size);
+            cache.accessTime = syncAppStamp;
+            var canvas = cache.canvas;
+            correctionScale = drawSize / cache.size;
+            ctx.scale(correctionScale, correctionScale);
+            x /= correctionScale;
+            y /= correctionScale;
+            ctx.drawImage(canvas, x - canvas.width / 2, y - canvas.height / 2);
+        }
+        ctx.restore();
+    }
+    function init() {
+        mainCanvas = document.getElementById("canvas");
+        mainCtx = mainCanvas.getContext("2d");
+        chatBox = document.getElementById("chat_textbox");
+        mainCanvas.focus();
+        function handleScroll(event) {
+            mouseZ *= Math.pow(.95, event.wheelDelta / -120 || event.detail || 0);
+            if (!settings.infiniteZoom && mouseZ < 1) mouseZ = 1;
+            if (mouseZ > 4 / mouseZ) mouseZ = 4 / mouseZ;
+        }
+        if (/firefox/i.test(navigator.userAgent)) document.addEventListener("DOMMouseScroll", handleScroll, 0);
+        else document.body.onmousewheel = handleScroll;
+        wHandle.onkeydown = function(event) {
+            switch (event.keyCode) {
+                case 13: // Enter
+                    if (overlayShown) break;
+                    if (settings.hideChat) break;
+                    if (isTyping) {
+                        chatBox.blur();
+                        var chattxt = chatBox.value;
+                        if (chattxt.length > 0) sendChat(chattxt);
+                        chatBox.value = "";
+                    } else chatBox.focus();
                     break;
-                case 27: // ESC key
-                    showOverlays(1);
-                    wHandle.isSpectating = 0;
+                case 32: // Space
+                    if (isTyping || overlayShown || pressed.space) break;
+                    wsSend(UINT8[17]);
+                    pressed.space = 1;
+                    break;
+                case 87: // W
+                    if (isTyping || overlayShown) break;
+                    wsSend(UINT8[21]);
+                    pressed.w = 1;
+                    break;
+                case 81: // Q
+                    if (isTyping || overlayShown || pressed.q) break;
+                    wsSend(UINT8[18]);
+                    pressed.q = 1;
+                    break;
+                case 69: // E
+                    if (isTyping || overlayShown) break;
+                    wsSend(UINT8[22]);
+                    pressed.e = 1;
+                    break;
+                case 82: // R
+                    if (isTyping || overlayShown) break;
+                    wsSend(UINT8[23]);
+                    pressed.r = 1;
+                    break;
+                case 84: // T
+                    if (isTyping || overlayShown || pressed.t) break;
+                    wsSend(UINT8[24]);
+                    pressed.t = 1;
+                    break;
+                case 80: // P
+                    if (isTyping || overlayShown || pressed.p) break;
+                    wsSend(UINT8[25]);
+                    pressed.p = 1;
+                    break;
+                case 79: // O
+                    if (isTyping || overlayShown || pressed.o) break;
+                    wsSend(UINT8[26]);
+                    pressed.o = 1;
+                    break;
+                case 77: // M
+                    if (isTyping || overlayShown || pressed.m) break;
+                    wsSend(UINT8[27]);
+                    pressed.m = 1;
+                    break;
+                case 73: // I
+                    if (isTyping || overlayShown || pressed.i) break;
+                    wsSend(UINT8[28]);
+                    pressed.i = 1;
+                    break;
+                case 89: // Y
+                    if (isTyping || overlayShown) break;
+                    wsSend(UINT8[30]);
+                    pressed.y = 1;
+                    break;
+                case 85: // U
+                    if (isTyping || overlayShown) break;
+                    wsSend(UINT8[31]);
+                    pressed.u = 1;
+                    break;
+                case 75: // K
+                    if (isTyping || overlayShown || pressed.k) break;
+                    wsSend(UINT8[29]);
+                    pressed.k = 1;
+                    break;
+                case 76: // L
+                    if (isTyping || overlayShown || pressed.l) break;
+                    wsSend(UINT8[33]);
+                    pressed.l = 1;
+                    break;
+                case 72: // H
+                    if (isTyping || overlayShown || pressed.h) break;
+                    wsSend(UINT8[34]);
+                    pressed.h = 1;
+                    break;
+                case 90: // Z
+                    if (isTyping || overlayShown) break;
+                    wsSend(UINT8[35]);
+                    pressed.z = 1;
+                    break;
+                case 88: // X
+                    if (isTyping || overlayShown || pressed.x) break;
+                    wsSend(UINT8[36]);
+                    pressed.x = 1;
+                    break;
+                case 83: // S
+                    if (isTyping || overlayShown) break;
+                    wsSend(UINT8[37]);
+                    pressed.s = 1;
+                    break;
+                case 67: // C
+                    if (isTyping || overlayShown || pressed.c) break;
+                    wsSend(UINT8[38]);
+                    pressed.c = 1;
+                    break;
+                case 71: // J
+                    if (isTyping || overlayShown) break;
+                    wsSend(UINT8[39]);
+                    pressed.j = 1;
+                    break;
+                case 74: // G
+                    if (isTyping || overlayShown) break;
+                    wsSend(UINT8[40]);
+                    pressed.g = 1;
+                    break;
+                case 66: // B
+                    if (isTyping || overlayShown || pressed.b) break;
+                    wsSend(UINT8[41]);
+                    pressed.b = 1;
+                    break;
+                case 86: // V
+                    if (isTyping || overlayShown) break;
+                    wsSend(UINT8[42]);
+                    pressed.v = 1;
+                    break;
+                case 78: // N
+                    if (isTyping || overlayShown) break;
+                    wsSend(UINT8[43]);
+                    pressed.n = 1;
+                    break;
+                case 27: // Esc
+                    if (pressed.esc) break;
+                    overlayShown ? hideOverlay() : showOverlay();
+                    pressed.esc = 1;
                     break;
             }
         };
         wHandle.onkeyup = function(event) {
             switch (event.keyCode) {
-                case 32:
-                    spacePressed = 0;
+                case 32: // Space
+                    pressed.space = 0;
                     break;
-                case 87:
-                    wPressed = 0;
+                case 87: // W
+                    pressed.w = 0;
                     break;
-                case 69:
-                    ePressed = 0;
+                case 81: // Q
+                    if (pressed.q) wsSend(UINT8[19]);
+                    pressed.q = 0;
                     break;
-                case 82:
-                    rPressed = 0;
+                case 69: // E
+                    pressed.e = 0;
                     break;
-                case 84:
-                    tPressed = 0;
+                case 82: // R
+                    pressed.r = 0;
                     break;
-                case 80:
-                    pPressed = 0;
+                case 84: // T
+                    pressed.t = 0;
                     break;
-                case 79:
-                    oPressed = 0;
+                case 80: // P
+                    pressed.p = 0;
                     break;
-                case 77:
-                    mPressed = 0;
+                case 79: // O
+                    pressed.o = 0;
                     break;
-                case 73:
-                    iPressed = 0;
+                case 77: // M
+                    pressed.m = 0;
                     break;
-                case 89:
-                    yPressed = 0;
+                case 73: // I
+                    pressed.i = 0;
                     break;
-                case 85:
-                    uPressed = 0;
+                case 89: // Y
+                    pressed.y = 0;
                     break;
-                case 75:
-                    kPressed = 0;
+                case 85: // U
+                    pressed.u = 0;
                     break;
-                case 76:
-                    lPressed = 0;
+                case 75: // K
+                    pressed.k = 0;
                     break;
-                case 72:
-                    hPressed = 0;
+                case 76: // L
+                    pressed.l = 0;
                     break;
-                case 90:
-                    zPressed = 0;
+                case 72: // H
+                    pressed.h = 0;
                     break;
-                case 88:
-                    xPressed = 0;
+                case 90: // Z
+                    pressed.z = 0;
                     break;
-                case 83:
-                    sPressed = 0;
+                case 88: // X
+                    pressed.x = 0;
                     break;
-                case 67:
-                    cPressed = 0;
+                case 83: // S
+                    pressed.s = 0;
                     break;
-                case 74:
-                    gPressed = 0;
+                case 67: // C
+                    pressed.c = 0;
                     break;
-                case 71:
-                    jPressed = 0;
+                case 74: // G
+                    pressed.g = 0;
                     break;
-                case 66:
-                    bPressed = 0;
+                case 71: // J
+                    pressed.j = 0;
                     break;
-                case 86:
-                    vPressed = 0;
+                case 66: // B
+                    pressed.b = 0;
                     break;
-                case 78:
-                    nPressed = 0;
+                case 86: // V
+                    pressed.v = 0;
                     break;
-                case 81:
-                    if (qPressed) {
-                        sendUint8(19);
-                        qPressed = 0;
-                    }
+                case 78: // N
+                    pressed.n = 0;
+                    break;
+                case 27: // Esc
+                    pressed.esc = 0;
                     break;
             }
         };
-        wHandle.onblur = function() {
-            sendUint8(19);
-            spacePressed = 0;
-            qPressed = 0;
-            ePressed = 0;
-            rPressed = 0;
-            tPressed = 0;
-            wPressed = 0;
-            pPressed = 0;
-            oPressed = 0;
-            mPressed = 0;
-            yPressed = 0;
-            uPressed = 0;
-            kPressed = 0;
-            iPressed = 0;
-            lPressed = 0;
-            hPressed = 0;
-            zPressed = 0;
-            xPressed = 0;
-            sPressed = 0;
-            cPressed = 0;
-            gPressed = 0;
-            jPressed = 0;
-            bPressed = 0;
-            vPressed = 0;
-            nPressed = 0;
+        chatBox.onblur = function() {
+            isTyping = 0;
+            drawChat();
         };
-        wHandle.onresize = canvasResize;
-        canvasResize();
-        if (wHandle.reqAnimFrame) wHandle.reqAnimFrame(redrawGameScene);
-        else setInterval(drawScene, 1E3 / 60);
-        setInterval(sendMouseMove, 40);
-        null == ws && showConnecting();
-        wjQuery("#overlays").show();
-    }
-    function onTouchStart(e) {
-        for (var i = 0; i < e.changedTouches.length; i++) {
-            var touch = e.changedTouches[i];
-            if ((leftTouchID < 0) && (touch.clientX < canvasWidth / 2)) {
-                leftTouchID = touch.identifier;
-                leftTouchStartPos.reset(touch.clientX, touch.clientY);
-                leftTouchPos.copyFrom(leftTouchStartPos);
-                leftVector.reset(0, 0);
-            }
-            var size = ~~(canvasWidth / 7);
-            if ((touch.clientX > canvasWidth - size) && (touch.clientY > canvasHeight - size)) {
-                sendMouseMove();
-                sendUint8(17); //split
-            }
-            if ((touch.clientX > canvasWidth - size) && (touch.clientY > canvasHeight - 2 * size - 10) && (touch.clientY < canvasHeight - size - 10)) {
-                sendMouseMove();
-                sendUint8(21); //eject
-            }
+        chatBox.onfocus = function() {
+            isTyping = 1;
+            drawChat();
+        };
+        mainCanvas.onmousemove = function(event) {
+            mouseX = event.clientX;
+            mouseY = event.clientY;
+        };
+        setInterval(function() { // send mouse update
+            sendMouseMove((mouseX - mainCanvas.width / 2) / cameraZ + cameraX, (mouseY - mainCanvas.height / 2) / cameraZ + cameraY);
+        }, 60);
+        wHandle.onresize = function() {
+            var cW = mainCanvas.width = wHandle.innerWidth,
+                cH = mainCanvas.height = wHandle.innerHeight;
+            viewMult = Math.sqrt(Math.min(cH / 1080, cW / 1920));
+        };
+        wHandle.onresize();
+        log.info(`Init completed in ${Date.now() - DATE}ms`);
+        gameReset();
+        showOverlay();
+        if (settings.allowGETipSet && wHandle.location.search) {
+            var div = /ip=([\w\W]+):([0-9]+)/.exec(wHandle.location.search.slice(1));
+            if (div) wsInit(`${div[1]}:${div[2]}`);
         }
-        touches = e.touches;
+        window.requestAnimationFrame(drawGame);
     }
-    function onTouchMove(e) {
-        e.preventDefault();
-        for (var i = 0; i < e.changedTouches.length; i++) {
-            var touch = e.changedTouches[i];
-            if (leftTouchID == touch.identifier) {
-                leftTouchPos.reset(touch.clientX, touch.clientY);
-                leftVector.copyFrom(leftTouchPos);
-                leftVector.minusEq(leftTouchStartPos);
-                rawMouseX = leftVector.x * 3 + canvasWidth / 2;
-                rawMouseY = leftVector.y * 3 + canvasHeight / 2;
-                mouseCoordChange();
-                sendMouseMove();
-            }
-        }
-        touches = e.touches;
-    }
-    function onTouchEnd(e) {
-        touches = e.touches;
-        for (var i = 0; i < e.changedTouches.length; i++) {
-            var touch = e.changedTouches[i];
-            if (leftTouchID == touch.identifier) {
-                leftTouchID = -1;
-                leftVector.reset(0, 0);
-                break;
-            }
-        }
-    }
-    function handleWheel(event) {
-        zoom *= Math.pow(.9, event.wheelDelta / -120 || event.detail || 0);
-        !infiniteZoom && (1 > zoom && (zoom = 1));
-        zoom > 4 / viewZoom && (zoom = 4 / viewZoom);
-    }
-    function buildQTree() {
-        if (.4 > viewZoom) qTree = null;
-        else {
-            var a = Number.POSITIVE_INFINITY,
-                b = Number.POSITIVE_INFINITY,
-                c = Number.NEGATIVE_INFINITY,
-                d = Number.NEGATIVE_INFINITY,
-                e = 0;
-            for (var i = 0; i < nodelist.length; i++) {
-                var node = nodelist[i];
-                if (node.shouldRender() && !node.prepareData && 20 < node.size * viewZoom) {
-                    e = Math.max(node.size, e);
-                    a = Math.min(node.x, a);
-                    b = Math.min(node.y, b);
-                    c = Math.max(node.x, c);
-                    d = Math.max(node.y, d);
-                }
-            }
-            qTree = Quad.init({
-                minX: a - (e + 100),
-                minY: b - (e + 100),
-                maxX: c + (e + 100),
-                maxY: d + (e + 100),
-                maxChildren: 2,
-                maxDepth: 4
-            });
-            for (i = 0; i < nodelist.length; i++) {
-                node = nodelist[i];
-                if (node.shouldRender() && !(20 >= node.size * viewZoom)) {
-                    for (a = 0; a < node.points.length; ++a) {
-                        b = node.points[a].x;
-                        c = node.points[a].y;
-                        b < nodeX - canvasWidth / 2 / viewZoom || c < nodeY - canvasHeight / 2 / viewZoom || b > nodeX + canvasWidth / 2 / viewZoom || c > nodeY + canvasHeight / 2 / viewZoom || qTree.insert(node.points[a]);
-                    }
-                }
-            }
-        }
-    }
-    function mouseCoordChange() {
-        X = (rawMouseX - canvasWidth / 2) / viewZoom + nodeX;
-        Y = (rawMouseY - canvasHeight / 2) / viewZoom + nodeY;
-    }
-    function hideOverlays() {
-        hasOverlay = 0;
-        wjQuery("#adsBottom").hide();
-        wjQuery("#overlays").hide();
-    }
-    function showOverlays(arg) {
-        hasOverlay = 1;
-        userNickName = null;
-        wjQuery("#overlays").fadeIn(arg ? 200 : 3E3);
-    }
-    function showConnecting() {
-        if (!connecting) return;
-        wjQuery("#connecting").show();
-        wsConnect((useHttps ? "wss://" : "ws://") + CONNECTION_URL);
-    }
-    function wsConnect(wsUrl) {
-        if (ws) {
-            ws.onopen = null;
-            ws.onmessage = null;
-            ws.onclose = null;
-            try {
-                ws.close();
-            } catch (b) {}
-            ws = null;
-        }
-        wsUrl = (useHttps ? "wss://" : "ws://") + CONNECTION_URL;
-        nodesOnScreen = [];
-        playerCells = [];
-        nodes = {};
-        nodelist = [];
-        Cells = [];
-        leaderBoard = [];
-        mainCanvas = teamScores = null;
-        userScore = 0;
-        console.log("Connecting to " + wsUrl);
-        ws = new WebSocket(wsUrl);
-        ws.binaryType = "arraybuffer";
-        ws.onopen = onWsOpen;
-        ws.onmessage = onWsMSG;
-        ws.onclose = onWsClose;
-    }
-    function prepareData(a) {
-        return new DataView(new ArrayBuffer(a));
-    }
-    function wsSend(a) {
-        ws.send(a.buffer);
-    }
-    function onWsOpen() {
-        var msg;
-        console.log("Socket open");
-        delay = 500;
-        wjQuery("#connecting").hide();
-        msg = prepareData(5);
-        msg.setUint8(0, 254);
-        msg.setUint32(1, 5, 1); // Protcol 5
-        wsSend(msg);
-        msg = prepareData(5);
-        msg.setUint8(0, 255);
-        msg.setUint32(1, 1332175218, 1);
-        wsSend(msg);
-        sendNickName();
-    }
-    function onWsClose() {
-        setTimeout(showConnecting, delay);
-        console.log("Socket closed");
-        delay *= 1.5;
-    }
-    function onWsMSG(msg) {
-        handleWsMSG(new DataView(msg.data));
-    }
-    function handleWsMSG(msg) {
-        function getString() {
-            var text = '',
-                char;
-            while ((char = msg.getUint16(offset, 1)) != 0) {
-                offset += 2;
-                text += String.fromCharCode(char);
-            }
-            offset += 2;
-            return text;
-        }
-        var offset = 0,
-            setCustomLB = 0;
-        240 == msg.getUint8(offset) && (offset += 5);
-        switch (msg.getUint8(offset++)) {
-            case 16: // update nodes
-                updateNodes(msg, offset);
-                break;
-            case 17: // update position
-                posX = msg.getFloat32(offset, 1);
-                offset += 4;
-                posY = msg.getFloat32(offset, 1);
-                offset += 4;
-                posSize = msg.getFloat32(offset, 1);
-                offset += 4;
-                break;
-            case 20: // clear nodes
-                playerCells = [];
-                nodesOnScreen = [];
-                break;
-            case 21: // draw line
-                lineX = msg.getInt16(offset, 1);
-                offset += 2;
-                lineY = msg.getInt16(offset, 1);
-                offset += 2;
-                if (!drawLine) {
-                    drawLine = 1;
-                    drawLineX = lineX;
-                    drawLineY = lineY;
-                }
-                break;
-            case 32: // add node
-                nodesOnScreen.push(msg.getUint32(offset, 1));
-                offset += 4;
-                break;
-            case 48: // update leaderboard (custom text)
-                setCustomLB = 1;
-                noRanking = 1;
-                break;
-            case 49: // update leaderboard (ffa)
-                if (!setCustomLB) {
-                    noRanking = 0;
-                }
-                teamScores = null;
-                var LBplayerNum = msg.getUint32(offset, 1);
-                offset += 4;
-                leaderBoard = [];
-                for (i = 0; i < LBplayerNum; ++i) {
-                    var nodeId = msg.getUint32(offset, 1);
-                    offset += 4;
-                    leaderBoard.push({
-                        id: nodeId,
-                        name: getString()
-                    });
-                }
-                drawLB();
-                break;
-            case 50: // update leaderboard (teams)
-                teamScores = [];
-                var LBteamNum = msg.getUint32(offset, 1);
-                offset += 4;
-                for (var i = 0; i < LBteamNum; ++i) {
-                    teamScores.push(msg.getFloat32(offset, 1));
-                    offset += 4;
-                }
-                drawLB();
-                break;
-            case 64: // set border
-                leftPos = msg.getFloat64(offset, 1);
-                offset += 8;
-                topPos = msg.getFloat64(offset, 1);
-                offset += 8;
-                rightPos = msg.getFloat64(offset, 1);
-                offset += 8;
-                bottomPos = msg.getFloat64(offset, 1);
-                offset += 8;
-                posX = (rightPos + leftPos) / 2;
-                posY = (bottomPos + topPos) / 2;
-                posSize = 1;
-                minX = leftPos;
-                minY = topPos;
-                maxX = rightPos;
-                maxY = bottomPos;
-                if (0 == playerCells.length) {
-                    nodeX = posX;
-                    nodeY = posY;
-                    viewZoom = posSize;
-                }
-                break;
-            case 99:
-                addChat(msg, offset);
-                break;
-        }
-    }
-    function addChat(view, offset) {
-        function getString() {
-            var text = '',
-                char;
-            while ((char = view.getUint16(offset, 1)) != 0) {
-                offset += 2;
-                text += String.fromCharCode(char);
-            }
-            offset += 2;
-            return text;
-        }
-        var flags = view.getUint8(offset++);
-        // for future expansions
-        if (flags & 2) offset += 4;
-        if (flags & 4) offset += 8;
-        if (flags & 8) offset += 16;
-        var r = view.getUint8(offset++),
-            g = view.getUint8(offset++),
-            b = view.getUint8(offset++),
-            color = (r << 16 | g << 8 | b).toString(16);
-        while (color.length < 6) {
-            color = '0' + color;
-        }
-        color = '#' + color;
-        chatBoard.push({
-            "name": getString(),
-            "color": color,
-            "message": getString(),
-            "time": Date.now()
-        });
-        drawChatBoard();
-    }
-    function drawChatBoard() {
-        chatCanvas = document.createElement("canvas");
-        var ctx = chatCanvas.getContext("2d");
-        var scaleFactor = Math.min(Math.max(canvasWidth / 1200, .75), 1); // Scale factor = .75 to 1
-        chatCanvas.width = 1000 * scaleFactor;
-        chatCanvas.height = 550 * scaleFactor;
-        ctx.scale(scaleFactor, scaleFactor);
-        ctx.globalAlpha = .8;
-        var len = chatBoard.length;
-        var from = len - 10; // Max amount of lines to display on a chat board
-        if (from < 0) from = 0;
-        for (var i = 0; i < (len - from); i++) {
-            var chatName = new UText(18, chatBoard[i + from].color);
-            chatName.setValue(chatBoard[i + from].name);
-            var width = chatName.getWidth();
-            var a = chatName.render();
-            ctx.drawImage(a, 15, chatCanvas.height / scaleFactor - 24 * (len - i - from));
-            var chatText = new UText(18, '#666');
-            chatText.setValue(':' + chatBoard[i + from].message);
-            a = chatText.render();
-            ctx.drawImage(a, 15 + width * 1.8, chatCanvas.height / scaleFactor - 24 * (len - from - i));
-        }
-    }
-    function updateNodes(view, offset) {
-        timestamp = +new Date();
-        var code = Math.random();
-        ua = 0;
-        var queueLength = view.getUint16(offset, 1);
-        offset += 2;
-        for (i = 0; i < queueLength; ++i) {
-            var killer = nodes[view.getUint32(offset, 1)],
-                killedNode = nodes[view.getUint32(offset + 4, 1)];
-            offset += 8;
-            if (killer && killedNode) {
-                killedNode.destroy();
-                killedNode.ox = killedNode.x;
-                killedNode.oy = killedNode.y;
-                killedNode.oSize = killedNode.size;
-                killedNode.nx = killer.x;
-                killedNode.ny = killer.y;
-                killedNode.nSize = killedNode.size;
-                killedNode.updateTime = timestamp;
-            }
-        }
-        for (var i = 0;;) {
-            var nodeid = view.getUint32(offset, 1);
-            offset += 4;
-            if (0 == nodeid) break;
-            ++i;
-            var size, posY, posX = view.getInt32(offset, 1);
-            offset += 4;
-            posY = view.getInt32(offset, 1);
-            offset += 4;
-            size = view.getInt16(offset, 1);
-            offset += 2;
-            for (var r = view.getUint8(offset++), g = view.getUint8(offset++), b = view.getUint8(offset++),
-                color = (r << 16 | g << 8 | b).toString(16); 6 > color.length;) color = "0" + color;
-            var colorstr = "#" + color,
-                flags = view.getUint8(offset++),
-                flagVirus = !!(flags & 1),
-                flagAgitated = !!(flags & 16),
-                _skin = "";
-            flags & 2 && (offset += 4);
-            if (flags & 4) {
-                for (;;) { // Skin name
-                    var t = view.getUint8(offset, 1) & 0x7F;
-                    offset += 1;
-                    if (0 == t) break;
-                    _skin += String.fromCharCode(t);
-                }
-            }
-            for (var char, name = "";;) { // Nick name
-                char = view.getUint16(offset, 1);
-                offset += 2;
-                if (0 == char) break;
-                name += String.fromCharCode(char);
-            }
-            var node = null;
-            if (nodes.hasOwnProperty(nodeid)) {
-                node = nodes[nodeid];
-                node.updatePos();
-                node.ox = node.x;
-                node.oy = node.y;
-                node.oSize = node.size;
-                node.color = colorstr;
-            } else {
-                node = new Cell(nodeid, posX, posY, size, colorstr, name, _skin);
-                nodelist.push(node);
-                nodes[nodeid] = node;
-                node.ka = posX;
-                node.la = posY;
-            }
-            node.isVirus = flagVirus;
-            node.isAgitated = flagAgitated;
-            node.nx = posX;
-            node.ny = posY;
-            node.nSize = size;
-            node.updateCode = code;
-            node.updateTime = timestamp;
-            node.flag = flags;
-            name && node.setName(name);
-            if (-1 != nodesOnScreen.indexOf(nodeid) && -1 == playerCells.indexOf(node)) {
-                document.getElementById("overlays").style.display = "none";
-                playerCells.push(node);
-                if (1 == playerCells.length) {
-                    nodeX = node.x;
-                    nodeY = node.y;
-                }
-            }
-        }
-        queueLength = view.getUint32(offset, 1);
-        offset += 4;
-        for (i = 0; i < queueLength; i++) {
-            var nodeId = view.getUint32(offset, 1);
-            offset += 4;
-            node = nodes[nodeId];
-            null != node && node.destroy();
-        }
-        ua && 0 == playerCells.length && showOverlays(0);
-    }
-    function sendMouseMove() {
-        var msg;
-        if (wsIsOpen()) {
-            msg = rawMouseX - canvasWidth / 2;
-            var b = rawMouseY - canvasHeight / 2;
-            if (64 <= msg * msg + b * b && !(.01 > Math.abs(oldX - X) && .01 > Math.abs(oldY - Y))) {
-                oldX = X;
-                oldY = Y;
-                msg = prepareData(21);
-                msg.setUint8(0, 16);
-                msg.setFloat64(1, X, 1);
-                msg.setFloat64(9, Y, 1);
-                msg.setUint32(17, 0, 1);
-                wsSend(msg);
-            }
-        }
-    }
-    function sendNickName() {
-        if (wsIsOpen() && null != userNickName) {
-            var msg = prepareData(1 + 2 * userNickName.length);
-            msg.setUint8(0, 0);
-            for (var i = 0; i < userNickName.length; ++i) msg.setUint16(1 + 2 * i, userNickName.charCodeAt(i), 1);
-            wsSend(msg);
-        }
-    }
-    function sendChat(str) {
-        if (wsIsOpen() && (str.length < 200) && (str.length > 0) && !hideChat) {
-            var msg = prepareData(2 + 2 * str.length);
-            var offset = 0;
-            msg.setUint8(offset++, 99);
-            msg.setUint8(offset++, 0); // flags (0 for now)
-            for (var i = 0; i < str.length; ++i) {
-                msg.setUint16(offset, str.charCodeAt(i), 1);
-                offset += 2;
-            }
-            wsSend(msg);
-        }
-    }
-    function wsIsOpen() {
-        return null != ws && ws.readyState == ws.OPEN;
-    }
-    function sendUint8(a) {
-        if (wsIsOpen()) {
-            var msg = prepareData(1);
-            msg.setUint8(0, a);
-            wsSend(msg);
-        }
-    }
-    function redrawGameScene() {
-        drawScene();
-        wHandle.reqAnimFrame(redrawGameScene);
-    }
-    function canvasResize() {
-        window.scrollTo(0, 0);
-        canvasWidth = wHandle.innerWidth;
-        canvasHeight = wHandle.innerHeight;
-        nCanvas.width = canvasWidth;
-        nCanvas.height = canvasHeight;
-        drawScene();
-    }
-    function viewRange() {
-        var ratio = Math.max(canvasHeight / 1080, canvasWidth / 1920);
-        return ratio * zoom;
-    }
-    function calcViewZoom() {
-        if (0 != playerCells.length) {
-            for (var newViewZoom = 0, i = 0; i < playerCells.length; i++) newViewZoom += playerCells[i].size;
-            newViewZoom = Math.pow(Math.min(64 / newViewZoom, 1), .4) * viewRange();
-            viewZoom = (9 * viewZoom + newViewZoom) / 10;
-        }
-    }
-    function drawScene() {
-        var a, oldtime = Date.now();
-        ++cb;
-        timestamp = oldtime;
-        if (0 < playerCells.length) {
-            calcViewZoom();
-            var c = a = 0;
-            for (var d = 0; d < playerCells.length; d++) {
-                playerCells[d].updatePos();
-                a += playerCells[d].x / playerCells.length;
-                c += playerCells[d].y / playerCells.length;
-            }
-            posX = a;
-            posY = c;
-            posSize = viewZoom;
-            nodeX = (nodeX + a) / 2;
-            nodeY = (nodeY + c) / 2;
-        } else {
-            nodeX = (29 * nodeX + posX) / 30;
-            nodeY = (29 * nodeY + posY) / 30;
-            viewZoom = (9 * viewZoom + posSize * viewRange()) / 10;
-        }
-        buildQTree();
-        mouseCoordChange();
-        acidMode || ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-        if (acidMode) {
-            if (showDarkTheme) {
-                ctx.fillStyle = '#111';
-                ctx.globalAlpha = .07;
-                ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-                ctx.globalAlpha = 1;
-            } else {
-                ctx.fillStyle = '#F2FBFF';
-                ctx.globalAlpha = .07;
-                ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-                ctx.globalAlpha = 1;
-            }
-        } else {
-            drawGrid();
-        }
-        nodelist.sort(function(a, b) {
-            return a.size == b.size ? a.id - b.id : a.size - b.size;
-        });
-        ctx.save();
-        ctx.translate(canvasWidth / 2, canvasHeight / 2);
-        ctx.scale(viewZoom, viewZoom);
-        ctx.translate(-nodeX, -nodeY);
-        drawBorders(ctx);
-        drawSectors(ctx);
-        for (d = 0; d < Cells.length; d++) Cells[d].drawOneCell(ctx);
-        for (d = 0; d < nodelist.length; d++) nodelist[d].drawOneCell(ctx);
-        if (drawLine) {
-            drawLineX = (3 * drawLineX + lineX) / 4;
-            drawLineY = (3 * drawLineY + lineY) / 4;
-            ctx.save();
-            ctx.strokeStyle = "#FAA";
-            ctx.lineWidth = 10;
-            ctx.lineCap = "round";
-            ctx.lineJoin = "round";
-            ctx.globalAlpha = .5;
-            ctx.beginPath();
-            for (d = 0; d < playerCells.length; d++) {
-                ctx.moveTo(playerCells[d].x, playerCells[d].y);
-                ctx.lineTo(drawLineX, drawLineY);
-            }
-            ctx.stroke();
-            ctx.restore();
-        }
-        ctx.restore();
-        lbCanvas && lbCanvas.width && ctx.drawImage(lbCanvas, canvasWidth - lbCanvas.width - 10, 10); // Draw Leader Board
-        if (chatCanvas != null && !hideChat) ctx.drawImage(chatCanvas, 0, canvasHeight - chatCanvas.height - 50); // Draw Chat Board
-        userScore = Math.max(userScore, calcScore());
-        if (0 != userScore) {
-            if (null == scoreText) scoreText = new UText(24, '#FFF');
-            if (showPosition) position = "  |  Position: " + nodeX.toFixed(0) + ", " + nodeY.toFixed(0);
-            else var position = "";
-            scoreText.setValue('Score: ' + ~~(userScore / 100) + position);
-            c = scoreText.render();
-            a = c.width;
-            ctx.globalAlpha = .2;
-            ctx.fillStyle = '#000';
-            ctx.fillRect(10, 10, a + 10, 34); //canvasHeight - 10 - 24 - 10
-            ctx.globalAlpha = 1;
-            ctx.drawImage(c, 15, 15); //canvasHeight - 10 - 24 - 5
-        }
-        drawSplitIcon(ctx);
-        drawTouch(ctx);
-        var deltatime = Date.now() - oldtime;
-        deltatime > 1E3 / 60 ? z -= .01 : deltatime < 1E3 / 65 && (z += .01);
-        .4 > z && (z = .4);
-        1 < z && (z = 1);
-    }
-    function drawTouch(ctx) {
-        ctx.save();
-        if (touchable) {
-            for (var i = 0; i < touches.length; i++) {
-                var touch = touches[i];
-                if (touch.identifier == leftTouchID) {
-                    ctx.beginPath();
-                    ctx.strokeStyle = "#0096FF";
-                    ctx.lineWidth = 6;
-                    ctx.arc(leftTouchStartPos.x, leftTouchStartPos.y, 40, 0, Math.PI * 2, 1);
-                    ctx.stroke();
-                    ctx.beginPath();
-                    ctx.strokeStyle = "#0096FF";
-                    ctx.lineWidth = 2;
-                    ctx.arc(leftTouchStartPos.x, leftTouchStartPos.y, 60, 0, Math.PI * 2, 1);
-                    ctx.stroke();
-                    ctx.beginPath();
-                    ctx.strokeStyle = "#0096FF";
-                    ctx.arc(leftTouchPos.x, leftTouchPos.y, 40, 0, Math.PI * 2, 1);
-                    ctx.stroke();
-                } else {
-                    ctx.beginPath();
-                    ctx.beginPath();
-                    ctx.strokeStyle = "#0096FF";
-                    ctx.lineWidth = "6";
-                    ctx.arc(touch.clientX, touch.clientY, 40, 0, Math.PI * 2, 1);
-                    ctx.stroke();
-                }
-            }
-        }
-        ctx.restore();
-    }
-    function drawGrid() {
-        ctx.fillStyle = showDarkTheme ? "#111111" : "#F2FBFF";
-        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-        ctx.save();
-        ctx.strokeStyle = showDarkTheme ? "#AAA" : "#000";
-        ctx.globalAlpha = .05;
-        ctx.scale(viewZoom, viewZoom);
-        var a = canvasWidth / viewZoom,
-            b = canvasHeight / viewZoom;
-        if (showGrid) {
-            for (var c = -.5 + (-nodeX + a / 2) % 50; c < a; c += 50) {
-                ctx.beginPath();
-                ctx.moveTo(c, 0);
-                ctx.lineTo(c, b);
-                ctx.stroke();
-            }
-            for (c = -.5 + (-nodeY + b / 2) % 50; c < b; c += 50) {
-                ctx.beginPath();
-                ctx.moveTo(0, c);
-                ctx.lineTo(a, c);
-                ctx.stroke();
-            }
-        }
-        ctx.restore();
-    }
-    function drawSplitIcon(ctx) {
-        if (isTouchStart && splitIcon.width) {
-            var size = ~~(canvasWidth / 7);
-            ctx.drawImage(splitIcon, canvasWidth - size, canvasHeight - size, size, size);
-        }
-        if (isTouchStart && splitIcon.width) {
-            size = ~~(canvasWidth / 7);
-            ctx.drawImage(ejectIcon, canvasWidth - size, canvasHeight - 2 * size - 10, size, size);
-        }
-    }
-    function calcScore() {
-        for (var score = 0, i = 0; i < playerCells.length; i++) score += playerCells[i].nSize * playerCells[i].nSize;
-        return score;
-    }
-    function drawLB() {
-        lbCanvas = null;
-        if (null != teamScores || 0 != leaderBoard.length) {
-            if (null != teamScores || showName) {
-                lbCanvas = document.createElement("canvas");
-                var ctx = lbCanvas.getContext("2d"),
-                    boardLength = 60;
-                boardLength = null == teamScores ? boardLength + 24 * leaderBoard.length : boardLength + 180;
-                var scaleFactor = Math.min(.22 * canvasHeight, Math.min(200, .3 * canvasWidth)) / 200;
-                lbCanvas.width = 200 * scaleFactor;
-                lbCanvas.height = boardLength * scaleFactor;
-                ctx.scale(scaleFactor, scaleFactor);
-                ctx.globalAlpha = .4;
-                ctx.fillStyle = "#000";
-                ctx.fillRect(0, 0, 200, boardLength);
-                ctx.globalAlpha = 1;
-                ctx.fillStyle = "#FFF";
-                var c = "Leaderboard";
-                ctx.font = "30px Ubuntu";
-                ctx.fillText(c, 100 - ctx.measureText(c).width / 2, 40);
-                var b;
-                if (null == teamScores) {
-                    for (ctx.font = "20px Ubuntu", b = 0; b < leaderBoard.length; ++b) {
-                        c = leaderBoard[b].name || "An unnamed cell";
-                        if (!showName) c = "An unnamed cell";
-                        if (-1 != nodesOnScreen.indexOf(leaderBoard[b].id)) {
-                            playerCells[0].name && (c = playerCells[0].name);
-                            var userLBColor = String($("#lbColor").val());
-                            ctx.fillStyle = "#" + userLBColor;
-                            if (!noRanking) c = b + 1 + ". " + c;
-                            ctx.fillText(c, 100 - ctx.measureText(c).width / 2, 70 + 24 * b);
-                        } else {
-                            ctx.fillStyle = "#FFF";
-                            if (!noRanking) c = b + 1 + ". " + c;
-                            ctx.fillText(c, 100 - ctx.measureText(c).width / 2, 70 + 24 * b);
-                        }
-                    }
-                } else {
-                    for (b = c = 0; b < teamScores.length; ++b) {
-                        var d = c + teamScores[b] * Math.PI * 2;
-                        ctx.fillStyle = teamColor[b + 1];
-                        ctx.beginPath();
-                        ctx.moveTo(100, 140);
-                        ctx.arc(100, 140, 80, c, d, 0);
-                        ctx.fill();
-                        c = d;
-                    }
-                }
-            }
-        }
-    }
-    function drawBorders() {
-        if (!showBorders) return;
-        ctx.save();
-        if (!String($("#borderColor").val())) ctx.strokeStyle = "#FF0";
-        else ctx.strokeStyle = "#" + String($("#borderColor").val());
-        ctx.lineWidth = 20;
-        ctx.beginPath();
-        ctx.moveTo(minX, minY);
-        ctx.lineTo(maxX, minY);
-        ctx.lineTo(maxX, maxY);
-        ctx.lineTo(minX, maxY);
-        ctx.closePath();
-        ctx.stroke();
-        ctx.restore();
-    }
-    function drawSectors() {
-        if (!showSectors) return;
-        //ctx.strokeRect(minX, maxY, 500, 500);
-        var x = Math.round(minX) + 65;
-        var y = Math.round(minY) + 65;
-        var letter = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-        var w = (Math.round(maxX) - 65 - x) / 5;
-        var h = (Math.round(maxY) - 65 - y) / 5;
-        ctx.save();
-        ctx.beginPath();
-        ctx.lineWidth = .05;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.font = w * .6 + "px Russo One";
-        if (!String($("#sectorColor").val())) var color = "1A1A1A";
-        else color = String($("#sectorColor").val());
-        ctx.fillStyle = "#" + color;
-        var j = 0;
-        for (; 5 > j; j++) {
-            var i = 0;
-            for (; 5 > i; i++) ctx.fillText(letter[j] + (i + 1), x + w * i + w / 2, y + h * j + h / 2);
-        }
-        ctx.lineWidth = 100;
-        ctx.strokeStyle = "#" + color;
-        j = 0;
-        for (; 5 > j; j++) {
-            i = 0;
-            for (; 5 > i; i++) ctx.strokeRect(x + w * i, y + h * j, w, h);
-        }
-        ctx.stroke();
-        ctx.restore();
-    }
-    function Cell(uid, ux, uy, usize, ucolor, uname, a) {
-        this.id = uid;
-        this.ox = this.x = ux;
-        this.oy = this.y = uy;
-        this.oSize = this.size = usize;
-        this.color = ucolor;
-        this.points = [];
-        this.pointsAcc = [];
-        this.createPoints();
-        this.setName(uname);
-        this._skin = a;
-    }
-    function UText(usize, ucolor, ustroke, ustrokecolor) {
-        usize && (this._size = usize);
-        ucolor && (this._color = ucolor);
-        this._stroke = !!ustroke;
-        ustrokecolor && (this._strokeColor = ustrokecolor);
-    }
-    var nCanvas,
-        ctx,
-        mainCanvas,
-        lbCanvas,
-        chatCanvas,
-        canvasWidth,
-        canvasHeight,
-        qTree = null,
-        ws = null,
-        nodeX = 0,
-        nodeY = 0,
-        nodesOnScreen = [],
-        playerCells = [],
-        nodes = {},
-        nodelist = [],
-        Cells = [],
-        leaderBoard = [],
-        chatBoard = [],
-        rawMouseX = 0,
-        rawMouseY = 0,
-        X = -1,
-        Y = -1,
-        cb = 0,
-        timestamp = 0,
-        userNickName = null,
-        leftPos = 0,
-        topPos = 0,
-        rightPos = 1E4,
-        bottomPos = 1E4,
-        viewZoom = 1,
-        ua = 0,
-        userScore = 0,
-        /* v settings v */
-        showSkin = 1,
-        showName = 1,
-        showColor = 0,
-        showCellBorder = 0,
-        showPosition = 0,
-        showDarkTheme = 0,
-        showSectors = 0,
-        nameShadows = 0,
-        showMass = 0,
-        showGrid = 1,
-        hideChat = 0,
-        showBorders = 0,
-        transparentCells = 0,
-        smoothRender = 2,
-        infiniteZoom = 0,
-        /* ^ settings ^ */
-        posX = nodeX = ~~((leftPos + rightPos) / 2),
-        posY = nodeY = ~~((topPos + bottomPos) / 2),
-        posSize = 1,
-        gameMode = "",
-        teamScores = null,
-        connecting = 0,
-        hasOverlay = 1,
-        drawLine = 0,
-        lineX = 0,
-        lineY = 0,
-        drawLineX = 0,
-        drawLineY = 0,
-        Ra = 0,
-        teamColor = ["#333333", "#FF3333", "#33FF33", "#3333FF"],
-        acidMode = 0,
-        zoom = 1,
-        isTouchStart = "ontouchstart" in wHandle && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
-        splitIcon = new Image,
-        ejectIcon = new Image,
-        minX = 0,
-        minY = 0,
-        maxX = 0,
-        maxY = 0,
-        noRanking = 0;
-    splitIcon.src = "assets/img/split.png";
-    ejectIcon.src = "assets/img/feed.png";
-    wHandle.isSpectating = 0;
-    wHandle.setNick = function(arg) {
-        hideOverlays();
-        userNickName = arg;
-        sendNickName();
-        userScore = 0;
-    };
-    wHandle.setSkins = function(arg) {
-        showSkin = arg;
-    };
-    wHandle.setNames = function(arg) {
-        showName = arg;
-    };
-    wHandle.setCellBorder = function(arg) {
-        showCellBorder = arg;
-    };
-    wHandle.setCellPos = function (arg) {
-        showPosition = arg;
+    wHandle.setServer = function(arg) {
+        if (WS_URL === arg) return;
+        wsInit(arg);
     };
     wHandle.setDarkTheme = function(arg) {
-        showDarkTheme = arg;
-    };
-    wHandle.setColors = function(arg) {
-        showColor = arg;
+        settings.darkTheme = arg;
+        drawStats();
     };
     wHandle.setShowMass = function(arg) {
-        showMass = arg;
+        settings.showMass = arg;
     };
-    wHandle.setSmooth = function(arg) {
-        smoothRender = arg ? 2 : 0;
+    wHandle.setSkins = function(arg) {
+        settings.showSkins = arg;
     };
-    wHandle.setMapBorders = function(arg) {
-        showBorders = arg;
+    wHandle.setColors = function(arg) {
+        settings.showColor = !arg;
     };
-    wHandle.setMapSectors = function(arg) {
-        showSectors = arg;
-    };
-    wHandle.setNameShadows = function(arg) {
-        nameShadows = arg;
-    };
-    wHandle.setZoom = function(arg) {
-        infiniteZoom = arg;
+    wHandle.setNames = function(arg) {
+        settings.showNames = arg;
+        drawLeaderboard();
     };
     wHandle.setChatHide = function(arg) {
-        hideChat = arg;
-        hideChat ? wjQuery('#chat_textbox').hide() : wjQuery('#chat_textbox').show();
+        settings.hideChat = arg;
+        settings.hideChat ? wjQuery('#chat_textbox').hide() : wjQuery('#chat_textbox').show();
     };
-    wHandle.setMapGrid = function(arg) {
-        showGrid = arg;
+    wHandle.setMinimap = function(arg) {
+        settings.showMinimap = !arg;
     };
-    wHandle.setTransparent = function(arg) {
-        transparentCells = arg;
+    wHandle.setGrid = function(arg) {
+        settings.hideGrid = arg;
+    };
+    wHandle.setCellBorder = function(arg) {
+        settings.cellBorders = arg;
+    };
+    wHandle.setZoom = function(arg) {
+        settings.infiniteZoom = arg;
+    };
+    wHandle.setTransparency = function(arg) {
+        settings.transparency = arg;
+    };
+    wHandle.setMapBorders = function(arg) {
+        settings.mapBorders = arg;
+    };
+    wHandle.setSectors = function(arg) {
+        settings.sectors = arg;
+    };
+    wHandle.setCellPos = function(arg) {
+        settings.showPos = arg;
+    };
+    wHandle.setTextOutline = function(arg) {
+        settings.showTextOutline = arg;
+    };
+    wHandle.setFood = function(arg) {
+        settings.hideFood = arg;
+    };
+    wHandle.setJelly = function(arg) {
+        settings.jellyPhysics = arg;
     };
     wHandle.spectate = function() {
-        userNickName = null;
-        wHandle.isSpectating = 1;
-        sendUint8(1);
-        hideOverlays();
+        wsSend(UINT8[1]);
+        stats.maxScore = 0;
+        hideOverlay();
     };
-    wHandle.setGameMode = function(arg) {
-        if (arg != gameMode) {
-            gameMode = arg;
-            showConnecting();
-        }
+    wHandle.play = function(arg) {
+        sendPlay(arg);
+        hideOverlay();
     };
-    wHandle.setAcid = function(arg) {
-        acidMode = arg;
-    };
-    if (null != wHandle.localStorage) {
-        if (null == wHandle.localStorage.AB8) {
-            wHandle.localStorage.AB8 = ~~(100 * Math.random());
-        }
-        Ra = +wHandle.localStorage.AB8;
-        wHandle.ABGroup = Ra;
-    }
-    setTimeout(function() {}, 3E5);
-    var T = {
-        ZW: "EU-London"
-    };
-    wHandle.connect = wsConnect;
-    var data = {
-        "action": "test"
-    };
-    /*var response = null;
-    wjQuery.ajax({
-        type: "POST",
-        dataType: "json",
-        //url: "checkdir.php",
-        data: data,
-        success: function(data) {
-            response = JSON.parse(data["names"]);
-        }
-    });
-    var interval1Id = setInterval(function() {
-        wjQuery.ajax({
-            type: "POST",
-            dataType: "json",
-            //url: "checkdir.php",
-            data: data,
-            success: function(data) {
-                response = JSON.parse(data["names"]);
-            }
-        });
-        for (var i = 0; i < response; i++) {
-            if (-1 == knownNameDict.indexOf(response[i])) {
-                knownNameDict.push(response[i]);
-            }
-        }
-    }, 15000);*/
-    var delay = 500, // Animation delay (for non-smooth rendering instances)
-        oldX = -1,
-        oldY = -1,
-        z = 1,
-        scoreText = null,
-        skins = {},
-        knownNameDict = "ugandan knuckles;latvia;fidget red;fidget blue;fidget black;fidget green;fidget yellow;fidget grey;fidget orange;fidget white;fidget spinner;illuminati;dodge charger;cr king;dark theme;mercury;cell;virus;basketball;rockstar n;penta;rockstar s;penta;creeper;dragon;chrome;hellcat;poland;usa;china;russia;canada;australia;spain;brazil;germany;ukraine;france;sweden;chaplin;north korea;south korea;japan;united kingdom;earth;greece;latvia;lithuania;estonia;finland;norway;cia;maldivas;ussr;austria;nigeria;reddit;yaranaika;confederate;9gag;indiana;imperial japan;apple;4chan;italy;cat;bulgaria;tumblr;2ch.hk;hong kong;portugal;jamaica;german empire;mexico;sanik;switzerland;croatia;chile;indonesia;bangladesh;thailand;iran;iraq;peru;moon;botswana;bosnia;netherlands;european union;taiwan;pakistan;hungary;satanist;qing dynasty;matriarchy;patriarchy;feminism;ireland;texas;facepunch;prodota;cambodia;steam;piccolo;ea;india;kc;denmark;quebec;ayy lmao;sealand;bait;tsarist russia;origin;vinesauce;stalin;belgium;luxembourg;stussy;prussia;8ch;argentina;scotland;sir;romania;wojak;doge;nasa;byzantium;imperial japan;french kingdom;somalia;turkey;mars;pokerface;8;irs;receita federal;illuminati;facebook;putin;merkel;tsipras;obama;kim jong-un;dilma;hollande;berlusconi;cameron;clinton;hillary;venezuela;blatter;chavez;cuba;fidel;merkel;palin;queen;boris;bush;trump;underwood".split(";"),
-        knownNameDict_noDisp = "ugandan knuckles;fidget red;fidget blue;fidget black;fidget green;fidget yellow;fidget grey;fidget orange;fidget white;fidget spinner;cell;virus;8;EA;hellcat;cr king;nasa;putin;merkel;tsipras;obama;kim jong-un;dilma;hollande;berlusconi;cameron;clinton;hillary;blatter;chavez;fidel;merkel;palin;queen;boris;bush;trump;underwood;dodge charger;dark theme",
-        ib = ["_canvas'blob"];
-    Cell.prototype = {
-        id: 0,
-        points: null,
-        pointsAcc: null,
-        name: null,
-        nameCache: null,
-        sizeCache: null,
-        x: 0,
-        y: 0,
-        size: 0,
-        ox: 0,
-        oy: 0,
-        oSize: 0,
-        nx: 0,
-        ny: 0,
-        nSize: 0,
-        flag: 0,
-        updateTime: 0,
-        updateCode: 0,
-        drawTime: 0,
-        destroyed: 0,
-        isVirus: 0,
-        isAgitated: 0,
-        wasSimpleDrawing: 1,
-        destroy: function() {
-            var tmp;
-            for (tmp = 0; tmp < nodelist.length; tmp++)
-                if (nodelist[tmp] == this) {
-                    nodelist.splice(tmp, 1);
-                    break;
-                }
-            delete nodes[this.id];
-            tmp = playerCells.indexOf(this);
-            if (-1 != tmp) {
-                ua = 1;
-                playerCells.splice(tmp, 1);
-            }
-            tmp = nodesOnScreen.indexOf(this.id);
-            if (-1 != tmp) {
-                nodesOnScreen.splice(tmp, 1);
-            }
-            this.destroyed = 1;
-            Cells.push(this);
-        },
-        getNameSize: function() {
-            return Math.max(~~(this.size / 3.2), 2);
-        },
-        setName: function(a) {
-            this.name = a;
-            if (null == this.nameCache) {
-                var nameColor = String($("#nameColor").val());
-                this.nameCache = new UText(this.getNameSize(), "#" + nameColor, 1, "#000");
-                this.nameCache.setValue(this.name);
-            } else {
-                this.nameCache.setSize(this.getNameSize());
-                this.nameCache.setValue(this.name);
-            }
-        },
-        createPoints: function() {
-            for (var samplenum = this.getNumPoints(); this.points.length > samplenum;) {
-                var rand = ~~(Math.random() * this.points.length);
-                this.points.splice(rand, 1);
-                this.pointsAcc.splice(rand, 1);
-            }
-            if (0 == this.points.length && 0 < samplenum) {
-                this.points.push({
-                    ref: this,
-                    size: this.size,
-                    x: this.x,
-                    y: this.y
-                });
-                this.pointsAcc.push(Math.random() - .5);
-            }
-            while (this.points.length < samplenum) {
-                var rand2 = ~~(Math.random() * this.points.length),
-                    point = this.points[rand2];
-                this.points.splice(rand2, 0, {
-                    ref: this,
-                    size: point.size,
-                    x: point.x,
-                    y: point.y
-                });
-                this.pointsAcc.splice(rand2, 0, this.pointsAcc[rand2]);
-            }
-        },
-        getNumPoints: function() {
-            if (0 == this.id) return 16;
-            var a = 10;
-            if (20 > this.size) a = 0;
-            if (this.isVirus) a = 30;
-            var b = this.size;
-            if (!this.isVirus)(b *= viewZoom);
-            b *= z;
-            if (this.flag & 32)(b *= .25);
-            return ~~Math.max(b, a);
-        },
-        movePoints: function() {
-            this.createPoints();
-            for (var points = this.points, pointsacc = this.pointsAcc, numpoints = points.length, i = 0; i < numpoints; ++i) {
-                var pos1 = pointsacc[(i - 1 + numpoints) % numpoints],
-                    pos2 = pointsacc[(i + 1) % numpoints];
-                pointsacc[i] += (Math.random() - .5) * (this.isAgitated ? 3 : 1);
-                pointsacc[i] *= .7;
-                10 < pointsacc[i] && (pointsacc[i] = 10); - 10 > pointsacc[i] && (pointsacc[i] = -10);
-                pointsacc[i] = (pos1 + pos2 + 8 * pointsacc[i]) / 10;
-            }
-            for (var ref = this, isvirus = this.isVirus ? 0 : (this.id / 1E3 + timestamp / 1E4) % (2 * Math.PI), j = 0; j < numpoints; ++j) {
-                var f = points[j].size,
-                    e = points[(j - 1 + numpoints) % numpoints].size,
-                    m = points[(j + 1) % numpoints].size;
-                if (15 < this.size && null != qTree && 20 < this.size * viewZoom && 0 != this.id) {
-                    var l = 0,
-                        n = points[j].x,
-                        q = points[j].y;
-                    qTree.retrieve2(n - 5, q - 5, 10, 10, function(a) {
-                        if (a.ref != ref && 25 > (n - a.x) * (n - a.x) + (q - a.y) * (q - a.y)) {
-                            l = 1;
-                        }
-                    });
-                    if (!l && points[j].x < leftPos || points[j].y < topPos || points[j].x > rightPos || points[j].y > bottomPos) {
-                        l = 1;
-                    }
-                    if (l) {
-                        if (0 < pointsacc[j]) (pointsacc[j] = 0);
-                        pointsacc[j] -= 1;
-                    }
-                }
-                f += pointsacc[j];
-                0 > f && (f = 0);
-                f = this.isAgitated ? (19 * f + this.size) / 20 : (12 * f + this.size) / 13;
-                points[j].size = (e + m + 8 * f) / 10;
-                e = 2 * Math.PI / numpoints;
-                m = this.points[j].size;
-                this.isVirus && 0 == j % 2 && (m += 5);
-                points[j].x = this.x + Math.cos(e * j + isvirus) * m;
-                points[j].y = this.y + Math.sin(e * j + isvirus) * m;
-            }
-        },
-        updatePos: function() {
-            if (0 == this.id) return 1;
-            var a;
-            a = (timestamp - this.updateTime) / 120;
-            a = 0 > a ? 0 : 1 < a ? 1 : a;
-            var b = 0 > a ? 0 : 1 < a ? 1 : a;
-            this.getNameSize();
-            if (this.destroyed && 1 <= b)
-                var c = Cells.indexOf(this); - 1 != c && Cells.splice(c, 1);
-            this.x = a * (this.nx - this.ox) + this.ox;
-            this.y = a * (this.ny - this.oy) + this.oy;
-            this.size = b * (this.nSize - this.oSize) + this.oSize;
-            return b;
-        },
-        shouldRender: function() {
-            if (0 == this.id) return 1;
-            else {
-                return !(this.x + this.size + 40 < nodeX - canvasWidth / 2 / viewZoom ||
-                this.y + this.size + 40 < nodeY - canvasHeight / 2 / viewZoom ||
-                this.x - this.size - 40 > nodeX + canvasWidth / 2 / viewZoom ||
-                this.y - this.size - 40 > nodeY + canvasHeight / 2 / viewZoom);
-            }
-        },
-        drawOneCell: function(ctx) {
-            if (this.shouldRender()) {
-                var b = (0 != this.id && !this.isVirus && smoothRender > viewZoom);
-                if (10 > this.getNumPoints()) b = 1;
-                if (this.wasSimpleDrawing && !b)
-                    for (var c = 0; c < this.points.length; c++) this.points[c].size = this.size;
-                this.wasSimpleDrawing = b;
-                ctx.save();
-                this.drawTime = timestamp;
-                c = this.updatePos();
-                this.destroyed && (ctx.globalAlpha *= 1 - c);
-                ctx.lineWidth = 10;
-                ctx.lineCap = "round";
-                ctx.lineJoin = this.isVirus ? "miter" : "round";
-                ctx.globalAlpha = transparentCells ? .5 : 1;
-                if (showColor) {
-                    ctx.fillStyle = "#FFF";
-                    ctx.strokeStyle = "#AAA";
-                } else {
-                    ctx.fillStyle = this.color;
-                    ctx.strokeStyle = this.color;
-                }
-                if (b) {
-                    ctx.beginPath();
-                    ctx.arc(this.x, this.y, this.size - (20 < this.size || !showCellBorder ? 0 : 5), 0, Math.PI * 2, 0);
-                } else {
-                    this.movePoints();
-                    ctx.beginPath();
-                    var d = this.getNumPoints();
-                    ctx.moveTo(this.points[0].x, this.points[0].y);
-                    for (c = 1; c <= d; ++c) {
-                        var e = c % d;
-                        ctx.lineTo(this.points[e].x, this.points[e].y);
-                    }
-                }
-                ctx.closePath();
-                var skinName = this.name.toLowerCase();
-                if (skinName.indexOf('[') != -1) {
-                    var clanStart = skinName.indexOf('[');
-                    var clanEnd = skinName.indexOf(']');
-                    skinName = skinName.slice(clanStart + 1, clanEnd);
-                }
-                if (!this.isAgitated && showSkin && teamScores == null) {
-                    if (-1 != knownNameDict.indexOf(skinName)) {
-                        if (!skins.hasOwnProperty(skinName)) {
-                            skins = new Image;
-                            skins.src = SKIN_URL + skinName + '.png';
-                        }
-                        if (0 != skins.width && skins.complete) {
-                            c = skins;
-                        } else c = null;
-                    } else c = null;
-                } else c = null;
-                c = (e = c) ? -1 != ib.indexOf(skinName) : 0;
-                if (showCellBorder) {
-                    if (!b || 20 < this.size)
-                    ctx.lineWidth = 5;
-                    ctx.stroke();
-                } else b || ctx.stroke();
-                ctx.fill();
-                if (!(null == e || c)) {
-                    ctx.save();
-                    ctx.clip();
-                    ctx.drawImage(e, this.x - this.size, this.y - this.size, 2 * this.size, 2 * this.size);
-                    ctx.restore();
-                }
-                if (showCellBorder) {
-                    if (!b || 20 < this.size) {
-                        var color = String($("#cellBorderColor").val());
-                        ctx.strokeStyle = '#' + color;
-                        if (color == '000000' || color == '000' || !color) alpha = .12;
-                        else var alpha = 1;
-                        ctx.globalAlpha *= alpha;
-                        var size = String($("#cellBorderSize").val());
-                        ctx.lineWidth = size;
-                        ctx.stroke();
-                    }
-                }
-                ctx.globalAlpha = 1;
-                if (null != e && c) ctx.drawImage(e, this.x - 2 * this.size, this.y - 2 * this.size, 4 * this.size, 4 * this.size);
-                c = -1 != playerCells.indexOf(this);
-                var ncache;
-                // Draw name and score text
-                if (0 != this.id) {
-                    var b = ~~this.y;
-                    if ((showName || c) && this.name && this.nameCache && (null == e || -1 == knownNameDict_noDisp.indexOf(skinName))) {
-                        ncache = this.nameCache;
-                        ncache.setValue(this.name);
-                        ncache.setSize(this.getNameSize());
-                        var ratio = Math.ceil(10 * viewZoom) / 10;
-                        ncache.setScale(ratio);
-                        var rnchache = ncache.render(),
-                            w = ~~(rnchache.width / ratio),
-                            h = ~~(rnchache.height / ratio);
-                        ctx.drawImage(rnchache, ~~this.x - ~~(w / 2), b - ~~(h / 2), w, h);
-                        b += rnchache.height / 2 / ratio + 4;
-                    }
-                    if (showMass && (c || 0 == playerCells.length && (!this.isVirus || this.isAgitated) && 20 < this.size)) {
-                        if (null == this.sizeCache) {
-                            this.sizeCache = new UText(this.getNameSize() / 2, "#FFF", 1, "#000");
-                        }
-                        c = this.sizeCache;
-                        c.setSize(this.getNameSize() / 2);
-                        c.setValue(~~(this.size * this.size / 100));
-                        ratio = Math.ceil(10 * viewZoom) / 10;
-                        c.setScale(ratio);
-                        e = c.render();
-                        w = ~~(e.width / ratio);
-                        h = ~~(e.height / ratio);
-                        if (!this.name) var div = 2;
-                        else div = 3;
-                        ctx.drawImage(e, ~~this.x - ~~(w / 2), b - ~~(h / 2), w, h);
-                    }
-                }
-                ctx.restore();
-            }
-        }
-    };
-    UText.prototype = {
-        _value: "",
-        _color: "#000",
-        _stroke: 0,
-        _strokeColor: "#000",
-        _size: 16,
-        _canvas: null,
-        _ctx: null,
-        _dirty: 0,
-        _scale: 1,
-        setSize: function(a) {
-            if (this._size != a) {
-                this._size = a;
-                this._dirty = 1;
-            }
-        },
-        setScale: function(a) {
-            if (this._scale != a) {
-                this._scale = a;
-                this._dirty = 1;
-            }
-        },
-        setStrokeColor: function(a) {
-            if (this._strokeColor != a) {
-                this._strokeColor = a;
-                this._dirty = 1;
-            }
-        },
-        setValue: function(a) {
-            if (a != this._value) {
-                this._value = a;
-                this._dirty = 1;
-            }
-        },
-        render: function() {
-            if (null == this._canvas) {
-                this._canvas = document.createElement("canvas");
-                this._ctx = this._canvas.getContext("2d");
-            }
-            if (this._dirty) {
-                this._dirty = 0;
-                var canvas = this._canvas,
-                    ctx = this._ctx,
-                    value = this._value,
-                    scale = this._scale,
-                    fontsize = this._size,
-                    font = fontsize + 'px Ubuntu';
-                ctx.font = font;
-                var h = ~~(.2 * fontsize);
-                canvas.width = (ctx.measureText(value).width + 6) * scale;
-                canvas.height = (fontsize + h) * scale;
-                ctx.font = font;
-                ctx.scale(scale, scale);
-                ctx.globalAlpha = 1;
-                if (nameShadows) width = 8 * (fontsize * .014);
-                else var width = 1;
-                ctx.lineWidth = width;
-                ctx.strokeStyle = this._strokeColor;
-                ctx.fillStyle = this._color;
-                this._stroke && ctx.strokeText(value, 3, fontsize - h / 2);
-                ctx.fillText(value, 3, fontsize - h / 2);
-            }
-            return this._canvas;
-        },
-        getWidth: function() {
-            return (ctx.measureText(this._value).width + 6);
-        }
-    };
-    Date.now || (Date.now = function() {
-        return (new Date).getTime();
-    });
-    var Quad = {
-        init: function(args) {
-            function Node(x, y, w, h, depth) {
-                this.x = x;
-                this.y = y;
-                this.w = w;
-                this.h = h;
-                this.depth = depth;
-                this.items = [];
-                this.nodes = [];
-            }
-            var c = args.maxChildren || 2;
-            var d = args.maxDepth || 4;
-            Node.prototype = {
-                x: 0,
-                y: 0,
-                w: 0,
-                h: 0,
-                depth: 0,
-                items: null,
-                nodes: null,
-                exists: function(selector) {
-                    for (var i = 0; i < this.items.length; ++i) {
-                        var item = this.items[i];
-                        if (item.x >= selector.x && item.y >= selector.y && item.x < selector.x + selector.w && item.y < selector.y + selector.h) return 1;
-                    }
-                    if (0 != this.nodes.length) {
-                        var self = this;
-                        return this.findOverlappingNodes(selector, function(dir) {
-                            return self.nodes[dir].exists(selector);
-                        });
-                    }
-                    return 0;
-                },
-                retrieve: function(item, callback) {
-                    for (var i = 0; i < this.items.length; ++i) callback(this.items[i]);
-                    if (0 != this.nodes.length) {
-                        var self = this;
-                        this.findOverlappingNodes(item, function(dir) {
-                            self.nodes[dir].retrieve(item, callback);
-                        });
-                    }
-                },
-                insert: function(a) {
-                    if (0 != this.nodes.length) {
-                        this.nodes[this.findInsertNode(a)].insert(a);
-                    } else {
-                        if (this.items.length >= c && this.depth < d) {
-                            this.devide();
-                            this.nodes[this.findInsertNode(a)].insert(a);
-                        } else this.items.push(a);
-                    }
-                },
-                findInsertNode: function(a) {
-                    return a.x < this.x + this.w / 2 ? a.y < this.y + this.h / 2 ? 0 : 2 : a.y < this.y + this.h / 2 ? 1 : 3;
-                },
-                findOverlappingNodes: function(a, b) {
-                    return a.x < this.x + this.w / 2 &&
-                    (a.y < this.y + this.h / 2 && b(0) ||
-                    a.y >= this.y + this.h / 2 && b(2)) ||
-                    a.x >= this.x + this.w / 2 &&
-                    (a.y < this.y + this.h / 2 && b(1) ||
-                    a.y >= this.y + this.h / 2 && b(3)) ? 1 : 0;
-                },
-                devide: function() {
-                    var a = this.depth + 1,
-                        c = this.w / 2,
-                        d = this.h / 2;
-                    this.nodes.push(new Node(this.x, this.y, c, d, a));
-                    this.nodes.push(new Node(this.x + c, this.y, c, d, a));
-                    this.nodes.push(new Node(this.x, this.y + d, c, d, a));
-                    this.nodes.push(new Node(this.x + c, this.y + d, c, d, a));
-                    a = this.items;
-                    this.items = [];
-                    for (c = 0; c < a.length; c++) this.insert(a[c]);
-                },
-                clear: function() {
-                    for (var a = 0; a < this.nodes.length; a++) this.nodes[a].clear();
-                    this.items.length = 0;
-                    this.nodes.length = 0;
-                }
-            };
-            var internalSelector = {
-                x: 0,
-                y: 0,
-                w: 0,
-                h: 0
-            };
-            return {
-                root: new Node(args.minX, args.minY, args.maxX - args.minX, args.maxY - args.minY, 0),
-                insert: function(a) {
-                    this.root.insert(a);
-                },
-                retrieve: function(a, b) {
-                    this.root.retrieve(a, b);
-                },
-                retrieve2: function(a, b, c, d, callback) {
-                    internalSelector.x = a;
-                    internalSelector.y = b;
-                    internalSelector.w = c;
-                    internalSelector.h = d;
-                    this.root.retrieve(internalSelector, callback);
-                },
-                exists: function(a) {
-                    return this.root.exists(a);
-                },
-                clear: function() {
-                    this.root.clear();
-                }
-            };
-        }
-    };
-    /*wjQuery(function() {
-        // Updates favicon color based your on cell color
-        function renderFavicon() {
-            if (0 < playerCells.length) {
-                redCell.color = playerCells[0].color;
-                redCell.setName(playerCells[0].name);
-            }
-            ctx.clearRect(0, 0, 32, 32),
-            ctx.save(),
-            ctx.translate(16, 16),
-            ctx.scale(.4, .4),
-            redCell.drawOneCell(ctx),
-            ctx.restore();
-            var favicon = document.getElementById("favicon"),
-                oldfavicon = favicon.cloneNode(true);
-            oldfavicon.setAttribute("href", favCanvas.toDataURL("image/png"));
-            favicon.parentNode.replaceChild(oldfavicon, favicon);
-        }
-        var redCell = new Cell(0, 0, 0, 32, "#ED1C24", ""),
-            favCanvas = document.createElement("canvas");
-        favCanvas.width = 32;
-        favCanvas.height = 32;
-        var ctx = favCanvas.getContext("2d");
-        renderFavicon();
-        // NOTE: This feature causes stuttering
-        // Update icon color every 5 seconds
-        setInterval(renderFavicon, 5e3);
-    });*/
-    wHandle.onload = gameLoop;
+    wHandle.onload = init;
 })(window, window.jQuery);
